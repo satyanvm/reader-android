@@ -51,6 +51,7 @@ class HttpSyncApi(
                 when (val code = conn.responseCode) {
                     200 -> JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
                     404 -> if (method == "GET") null else throw SyncUnavailableException("404 on $method")
+                    401 -> throw UnauthorizedException()
                     else -> throw SyncUnavailableException("HTTP $code on $method")
                 }
             } catch (e: IOException) {

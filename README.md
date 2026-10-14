@@ -16,7 +16,7 @@ Requires JDK 17 and an Android SDK with platform 35.
 ./gradlew :app:assembleDebug
 ```
 
-`local.properties` needs `sdk.dir=...`. Add `sync.baseUrl` and `sync.token` to turn on sync (see the doc).
+`local.properties` needs `sdk.dir=...`. Sync goes to the Cloudflare Worker once you sign in from the Library's account button; add `google.webClientId` to turn on Sign in with Google (see the doc).
 
 For the Mac app, see [mac/README.md](mac/README.md).
 
@@ -26,6 +26,7 @@ For the Mac app, see [mac/README.md](mac/README.md).
 |---|---|
 | `model/` | `ReadingPosition`, `Stamp`, `HybridClock` |
 | `data/` | Room database, `PositionStore`, `ReadingPositionRepository` (the conflict policy), `DocumentRepository` (import + content-hash ids) |
+| `account/` | `SyncAccount` (email/password with emailed codes, Google; the session sync uses), `AccountApi`, `GoogleSignIn` (Credential Manager), `AccountScreen` |
 | `sync/` | `SyncApi` contract, `HttpSyncApi`, `SyncEngine`, WorkManager scheduling |
 | `reader/` | `ReaderController` (restore state machine), `PositionSaver` (debounced durable writes), `PageLayout` (fraction ↔ pixel math), `PdfDocument` (PdfRenderer), Compose screen |
 | `text/` | Flowing text: `PdfLineExtractor` (positioned, styled lines via PdfBox), `Ocr` (ML Kit for scanned pages), `Reflow` (lines → paragraphs/headings), `PageAssembly` (running headers, cross-page paragraphs), `TextDocument` (per-page pipeline + cache), `EpubBook` (EPUB parsing + chapter positions) |

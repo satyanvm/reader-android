@@ -3,8 +3,8 @@ package io.github.satyanvm.reader.account
 /**
  * Who is signed in. Sync runs only while [isSignedIn].
  *
- * Real sign-in isn't built yet; [StaticTokenSession] treats a token configured at build time as
- * a signed-in account, which is enough to exercise the sync path against a backend.
+ * [SyncAccount] is the real one (email/password or Google); [StaticTokenSession] treats a fixed
+ * token as a signed-in account, for tests.
  */
 interface AccountSession {
     val isSignedIn: Boolean

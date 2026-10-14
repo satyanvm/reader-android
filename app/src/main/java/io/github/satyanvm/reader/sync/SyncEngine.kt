@@ -14,6 +14,8 @@ class SyncEngine(
     private val repository: ReadingPositionRepository,
     private val api: SyncApi?,
     private val session: AccountSession,
+    /** The server rejected the token; the account should sign out and ask to sign in again. */
+    private val onUnauthorized: () -> Unit = {},
 ) {
     private val pushLock = Mutex()
 
@@ -30,6 +32,10 @@ class SyncEngine(
             for (local in repository.pending()) {
                 try {
                     repository.mergeRemote(api!!.put(local))
+                } catch (e: UnauthorizedException) {
+                    onUnauthorized()
+                    // Still pending: it goes up after the next sign-in.
+                    return@withLock true
                 } catch (e: SyncUnavailableException) {
                     ok = false
                 }
@@ -46,6 +52,9 @@ class SyncEngine(
         if (!isEnabled) return null
         val remote = try {
             api!!.get(documentId)
+        } catch (e: UnauthorizedException) {
+            onUnauthorized()
+            return null
         } catch (e: SyncUnavailableException) {
             return null
         } ?: return null

@@ -20,6 +20,8 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import io.github.satyanvm.reader.account.AccountScreen
+import io.github.satyanvm.reader.account.SyncAccount
 import io.github.satyanvm.reader.data.UnsupportedFormatException
 import io.github.satyanvm.reader.library.LibraryScreen
 import io.github.satyanvm.reader.reader.ReaderScreen
@@ -70,11 +72,22 @@ class MainActivity : ComponentActivity() {
                     composable("library") {
                         val library = remember { graph.documents.library() }
                         val rows by library.collectAsStateWithLifecycle(emptyList())
+                        val stage by graph.account.stage.collectAsStateWithLifecycle()
                         LibraryScreen(
                             rows = rows,
                             importing = importing,
                             onOpen = { id -> nav.navigate("reader/$id") },
                             onImport = ::importAndOpen,
+                            signedIn = stage is SyncAccount.Stage.SignedIn,
+                            onAccount = { nav.navigate("account") { launchSingleTop = true } },
+                        )
+                    }
+                    composable("account") {
+                        AccountScreen(
+                            account = graph.account,
+                            google = graph.googleSignIn,
+                            onSyncNow = { graph.syncScheduler.requestSync(delaySeconds = 0) },
+                            onBack = { nav.popBackStack() },
                         )
                     }
                     composable("reader/{id}") { entry ->

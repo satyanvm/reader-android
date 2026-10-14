@@ -7,14 +7,16 @@ plugins {
     id("com.google.devtools.ksp")
 }
 
-// Sync is off unless a backend is configured in local.properties:
-//   sync.baseUrl=https://api.example.com
-//   sync.token=<bearer token>
+// Sync goes to the Cloudflare Worker once someone signs in. Optional, in local.properties:
+//   sync.baseUrl=https://sync.example.dev another server (HTTPS: Android blocks plain HTTP)
+//   sync.token=<bearer token>             used while nobody is signed in (server/bin/admin.js tokens)
+//   google.webClientId=<id>.apps.googleusercontent.com   turns on Sign in with Google
 val localProps = Properties().apply {
     val f = rootProject.file("local.properties")
     if (f.exists()) f.inputStream().use { load(it) }
 }
 fun localProp(key: String) = (localProps.getProperty(key) ?: "").replace("\"", "\\\"")
+val defaultSyncServer = "https://reader-sync.satyanarayanv2050.workers.dev"
 
 android {
     namespace = "io.github.satyanvm.reader"
@@ -26,8 +28,9 @@ android {
         targetSdk = 35
         versionCode = 3
         versionName = "0.3.0"
-        buildConfigField("String", "SYNC_BASE_URL", "\"${localProp("sync.baseUrl")}\"")
+        buildConfigField("String", "SYNC_BASE_URL", "\"${localProp("sync.baseUrl").ifBlank { defaultSyncServer }}\"")
         buildConfigField("String", "SYNC_TOKEN", "\"${localProp("sync.token")}\"")
+        buildConfigField("String", "GOOGLE_WEB_CLIENT_ID", "\"${localProp("google.webClientId")}\"")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -85,6 +88,10 @@ dependencies {
     // On-device text recognition for scanned PDFs; model delivered by Google Play services.
     implementation("com.google.android.gms:play-services-mlkit-text-recognition:19.0.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
+    // Sign in with Google (Credential Manager; the Google sheet comes from Play services).
+    implementation("androidx.credentials:credentials:1.3.0")
+    implementation("androidx.credentials:credentials-play-services-auth:1.3.0")
+    implementation("com.google.android.libraries.identity.googleid:googleid:1.1.1")
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")

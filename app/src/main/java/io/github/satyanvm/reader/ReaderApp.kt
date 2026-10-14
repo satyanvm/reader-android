@@ -2,7 +2,9 @@ package io.github.satyanvm.reader
 
 import android.app.Application
 import android.content.Context
-import io.github.satyanvm.reader.account.StaticTokenSession
+import io.github.satyanvm.reader.account.AccountApi
+import io.github.satyanvm.reader.account.GoogleSignIn
+import io.github.satyanvm.reader.account.SyncAccount
 import io.github.satyanvm.reader.data.DocumentRepository
 import io.github.satyanvm.reader.data.ReadingPositionRepository
 import io.github.satyanvm.reader.data.RoomPositionStore
@@ -44,7 +46,17 @@ class AppGraph(context: Context) {
     val readingPrefs = ReadingPrefs(context)
     val filesDir: java.io.File = context.filesDir
     val syncScheduler = SyncScheduler(context)
-    val session = StaticTokenSession(BuildConfig.SYNC_TOKEN)
+
+    /** The sync server (the Cloudflare Worker), unless local.properties points elsewhere. */
+    val syncBaseUrl: String = BuildConfig.SYNC_BASE_URL
+    val account = SyncAccount(
+        api = AccountApi(syncBaseUrl),
+        prefs = context.getSharedPreferences("account", Context.MODE_PRIVATE),
+        fallbackToken = BuildConfig.SYNC_TOKEN,
+        // Reading done on this device before signing in goes up now.
+        onSignedIn = { syncScheduler.requestSync(delaySeconds = 0) },
+    )
+    val googleSignIn = GoogleSignIn(BuildConfig.GOOGLE_WEB_CLIENT_ID)
 
     val positions = ReadingPositionRepository(
         store = RoomPositionStore(database),
@@ -56,9 +68,9 @@ class AppGraph(context: Context) {
 
     val syncEngine = SyncEngine(
         repository = positions,
-        api = BuildConfig.SYNC_BASE_URL.takeIf { it.isNotBlank() }
-            ?.let { HttpSyncApi(it, session::token) },
-        session = session,
+        api = syncBaseUrl.takeIf { it.isNotBlank() }?.let { HttpSyncApi(it, account::token) },
+        session = account,
+        onUnauthorized = account::onUnauthorized,
     )
 
     private fun deviceId(context: Context): String {

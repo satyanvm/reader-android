@@ -67,16 +67,19 @@ PUT /v1/reading-positions/{documentId}
 
 The server **must** apply the same rule as the client: store the incoming position only if `(hlc, deviceId)` is greater than the stored one, then return the stored one. Inside a single transaction or conditional write, this makes `PUT` idempotent and order-independent. When the client gets back a position with its own stamp, it marks its row synced.
 
-To point the app at a server, add this to `local.properties`:
+The Android app talks to the deployed Worker (`https://reader-sync.satyanarayanv2050.workers.dev`) by default and syncs once someone signs in. Optional settings in `local.properties`:
 
 ```
-sync.baseUrl=https://api.example.com
-sync.token=<bearer token>
+sync.baseUrl=https://another-server.example.dev
+sync.token=<bearer token from server/bin/admin.js, used while nobody is signed in>
+google.webClientId=<id>.apps.googleusercontent.com
 ```
-
-With no `sync.baseUrl`, the app is local-only and sync is disabled.
 
 Positions are kept per account. People sign in with email and password (the email confirmed with an emailed code) or with Apple or Google; one email is one account however they sign in. See [server/README.md](../server/README.md).
+
+On Android, sign in from the account button at the top of the Library: email and password (new accounts and password resets confirm a 6-digit emailed code), or "Continue with Google" when the server has Google turned on and the build has `google.webClientId`. Signing in pushes any reading done before it; a token the server rejects (password reset elsewhere, signed out everywhere) signs the device out and asks to sign in again, keeping unsynced positions until then.
+
+Sign in with Google on Android needs, in one Google Cloud project: an OAuth client of type **Web application** (its id is `google.webClientId`, and it goes in the server's `GOOGLE_CLIENT_IDS`, because Google issues Android's ID tokens for it), and an OAuth client of type **Android** for package `io.github.satyanvm.reader` with the signing certificate's SHA-1 (`./gradlew :app:signingReport`).
 
 On the Mac, sign in under Reader → Settings… → Account, or from the Library's "Sign In to Sync" button. The server address is built into the app. The Mac app pushes pending positions a few seconds after each change, retries with exponential backoff, runs every 15 minutes, and pushes again when the network comes back and on every launch.
 

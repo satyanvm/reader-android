@@ -18,4 +18,7 @@ interface SyncApi {
 }
 
 /** Network or server failure that's worth retrying later. */
-class SyncUnavailableException(message: String, cause: Throwable? = null) : Exception(message, cause)
+open class SyncUnavailableException(message: String, cause: Throwable? = null) : Exception(message, cause)
+
+/** The server rejected the session token (401): signing in again is the only fix. */
+class UnauthorizedException : SyncUnavailableException("HTTP 401: session is no longer valid")
