@@ -1,0 +1,23 @@
+{
+  "name": "reader-sync-server",
+  "version": "1.0.0",
+  "description": "Reading-position sync server for the Reader apps (Cloudflare Worker + D1; also runs on Node)",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "bin": {
+    "reader-sync-admin": "bin/admin.js"
+  },
+  "scripts": {
+    "start": "node --disable-warning=ExperimentalWarning bin/server.js",
+    "test": "node --disable-warning=ExperimentalWarning --test --test-concurrency=1 test/*.test.js",
+    "test:worker": "TEST_TARGET=worker node --disable-warning=ExperimentalWarning --test --test-concurrency=1 test/*.test.js",
+    "dev:worker": "wrangler dev",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "wrangler": "^4.150.0"
+  }
+}

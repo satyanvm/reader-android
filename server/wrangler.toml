@@ -1,0 +1,24 @@
+# Cloudflare Worker + D1 for the Reader sync server. Deploy: npm run deploy
+name = "reader-sync"
+main = "src/worker.js"
+compatibility_date = "2025-09-01"
+workers_dev = true
+preview_urls = false
+
+[[d1_databases]]
+binding = "DB"
+database_name = "reader"
+database_id = "8398bf6b-bcf3-4403-820c-db10d88a9483"
+
+[vars]
+# Comma-separated. Empty turns that sign-in off.
+GOOGLE_CLIENT_IDS = ""
+APPLE_AUDIENCES = ""
+MAIL_FROM = "Reader <onboarding@resend.dev>"
+
+# Secrets (not in this file): `npx wrangler secret put <NAME>`
+#   PASSWORD_PEPPER  required: random secret mixed into password hashes; never change it
+#   RESEND_API_KEY   optional: send code emails; without it codes only appear in `npx wrangler tail`
+
+[observability]
+enabled = true

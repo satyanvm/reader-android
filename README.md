@@ -2,9 +2,9 @@
 
 A PDF and EPUB reader that always reopens where you stopped, on the same device or another one. Books can be read as original pages (PDF) or as flowing text, Play Books style.
 
-This is the Android app (Kotlin, Jetpack Compose, Room, WorkManager). The reading-position design and the server contract are in [docs/position-sync.md](docs/position-sync.md).
+This repo has the Android app (Kotlin, Jetpack Compose, Room, WorkManager) at the top level and the macOS app (SwiftUI, PDFKit, Vision, SQLite) in [mac/](mac/README.md). Both store the same reading position and sync through the server in [server/](server/README.md). The design is in [docs/position-sync.md](docs/position-sync.md).
 
-## Build and test
+## Build and test (Android)
 
 Requires JDK 17 and an Android SDK with platform 35.
 
@@ -18,7 +18,9 @@ Requires JDK 17 and an Android SDK with platform 35.
 
 `local.properties` needs `sdk.dir=...`. Add `sync.baseUrl` and `sync.token` to turn on sync (see the doc).
 
-## Layout
+For the Mac app, see [mac/README.md](mac/README.md).
+
+## Layout (Android)
 
 | Path | What |
 |---|---|

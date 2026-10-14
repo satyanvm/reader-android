@@ -1,0 +1,7 @@
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+data/
+node_modules/
+.wrangler/
+.dev.vars

@@ -32,7 +32,7 @@ The mode is remembered per document on each device (`documents.readingMode`) and
 
 ## Conflict policy: last writer wins
 
-Positions are ordered by `(hlc, deviceId)`, and the larger one wins. `hlc` is a hybrid logical clock. It's wall-clock milliseconds, but always greater than anything the device has issued or seen from the server. So once a device has seen another device's position, its next save orders after it, even if its own wall clock is behind. The clock is reseeded from the database on startup, so it never goes backwards across restarts.
+Positions are ordered by `(hlc, deviceId)`, and the larger one wins. Device ids compare by UTF-16 code units (Kotlin's `String.compareTo`; the Mac app does the same). `hlc` is a hybrid logical clock. It's wall-clock milliseconds, but always greater than anything the device has issued or seen from the server. So once a device has seen another device's position, its next save orders after it, even if its own wall clock is behind. The clock is reseeded from the database on startup, so it never goes backwards across restarts.
 
 Every write goes through one compare-and-store, `ReadingPositionRepository.mergeRemote` / `saveLocal`. That covers local saves, server responses, retries and late responses alike. Consequences:
 
@@ -42,6 +42,8 @@ Every write goes through one compare-and-store, `ReadingPositionRepository.merge
 
 ### While a document is open
 
+- When the Mac app becomes active again, open books check the server. Local reading is saved first, and the server's position counts only if it's newer than everything saved on this device. If the book hasn't been touched since, the reader moves there with a notice. If it's scrolled while the request is out, it's offered instead.
+
 - Nothing is saved until the initial restore has been applied. The list lays out at page 0 before that, and those reports are ignored.
 - Scroll reports are only accepted under the layout (width and zoom) the position was last applied to. A rotation or zoom change re-applies the position before reports count again.
 - If a newer server position arrives after opening:
@@ -49,6 +51,8 @@ Every write goes through one compare-and-store, `ReadingPositionRepository.merge
   - If the user has already started reading, it's never forced. A snackbar offers "Go there", and this device's position is re-saved so it stays the latest.
 
 ## Server contract
+
+Implemented by [server/](../server/README.md) (Node, SQLite, no dependencies).
 
 ```
 GET /v1/reading-positions/{documentId}
@@ -72,6 +76,10 @@ sync.token=<bearer token>
 
 With no `sync.baseUrl`, the app is local-only and sync is disabled.
 
+Positions are kept per account. People sign in with email and password (the email confirmed with an emailed code) or with Apple or Google; one email is one account however they sign in. See [server/README.md](../server/README.md).
+
+On the Mac, sign in under Reader → Settings… → Account, or from the Library's "Sign In to Sync" button. The server address is built into the app. The Mac app pushes pending positions a few seconds after each change, retries with exponential backoff, runs every 15 minutes, and pushes again when the network comes back and on every launch.
+
 ## Monitoring
 
-`RestoreTelemetry` records `FIRST_OPEN`, `RESTORED_LOCAL`, `RESTORED_REMOTE`, `REMOTE_APPLIED_LATE`, `USER_RESTART`, `RESTORE_MISMATCH` and `UNEXPECTED_RESET`. The current implementation logs under the `ReaderRestore` tag and keeps on-device counters. `UNEXPECTED_RESET` is logged at error level. Forward these to the analytics backend once one exists.
+`RestoreTelemetry` records `FIRST_OPEN`, `RESTORED_LOCAL`, `RESTORED_REMOTE`, `REMOTE_APPLIED_LATE`, `USER_RESTART`, `RESTORE_MISMATCH` and `UNEXPECTED_RESET`. The current implementation logs under the `ReaderRestore` tag (on the Mac, the unified log category `ReaderRestore`) and keeps on-device counters. `UNEXPECTED_RESET` is logged at error level. Forward these to the analytics backend once one exists.
