@@ -16,7 +16,7 @@ class AccountException(val code: String, message: String) : Exception(message)
 /**
  * The account endpoints of the sync server (server/src/worker.js):
  *
- *   POST /v1/auth/signup           { email, password }        -> 202, code emailed
+ *   POST /v1/auth/signup           { email, password }        -> 202, code emailed | session (codes off)
  *   POST /v1/auth/verify           { email, code }            -> session
  *   POST /v1/auth/resend           { email }
  *   POST /v1/auth/signin           { email, password }        -> session | 403 verification_required
@@ -30,16 +30,21 @@ class AccountApi(
     private val baseUrl: String,
     private val timeoutMs: Int = 15_000,
 ) {
-    data class Providers(val apple: Boolean, val google: Boolean)
+    /** [emailCodes] false: the server sends no codes, so sign-up signs straight in. */
+    data class Providers(val apple: Boolean, val google: Boolean, val emailCodes: Boolean = true)
 
     suspend fun providers(): Providers {
         val o = call("GET", "v1/auth/providers")
-        return Providers(o.optBoolean("apple"), o.optBoolean("google"))
+        return Providers(o.optBoolean("apple"), o.optBoolean("google"), o.optBoolean("emailCodes", true))
     }
 
-    /** Creates the account (or refreshes an unconfirmed one) and emails a code. */
-    suspend fun signUp(email: String, password: String) {
-        call("POST", "v1/auth/signup", mapOf("email" to email, "password" to password))
+    /**
+     * Creates the account. Returns its session when the server has email codes off; otherwise
+     * null, and a code has been emailed to confirm the address.
+     */
+    suspend fun signUp(email: String, password: String): AccountSessionInfo? {
+        val o = call("POST", "v1/auth/signup", mapOf("email" to email, "password" to password))
+        return if (o.optString("token").isEmpty()) null else session(o)
     }
 
     suspend fun verify(email: String, code: String): AccountSessionInfo =

@@ -67,6 +67,16 @@ class AccountTest {
     }
 
     @Test
+    fun `with email codes off, creating an account signs straight in`() = runBlocking<Unit> {
+        server.emailCodes = false
+        account.createAccount("new@example.com", "correct horse")
+        assertEquals(SyncAccount.Stage.SignedIn("new@example.com"), account.stage.value)
+        assertTrue(account.isSignedIn)
+        assertNull(server.lastCode)
+        assertEquals(1, signIns)
+    }
+
+    @Test
     fun `wrong code keeps waiting for the right one`() = runBlocking<Unit> {
         account.createAccount("a@example.com", "password1")
         try {
@@ -194,6 +204,9 @@ private class FakeAccountServer {
     val sessions = mutableMapOf<String, String>()
     var lastCode: String? = null
     var positionPuts = 0
+
+    /** False: like the Worker with EMAIL_VERIFICATION=off, sign-up returns a session. */
+    var emailCodes = true
     private val positions = mutableMapOf<String, JSONObject>()
     private var nextCode = 123456
     private var nextToken = 1
@@ -246,6 +259,10 @@ private class FakeAccountServer {
             "GET /v1/auth/providers" -> 200 to JSONObject().put("apple", false).put("google", true)
             "POST /v1/auth/signup" -> {
                 passwords[email] = b.getString("password")
+                if (!emailCodes) {
+                    verified += email
+                    return session(email)
+                }
                 sendCode(email)
                 202 to JSONObject().put("status", "verification_sent")
             }

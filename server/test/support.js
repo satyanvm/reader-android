@@ -31,12 +31,12 @@ const env = {
  * Workers runtime with a local D1 (`wrangler dev`); otherwise the same handler runs in-process
  * on Node with an in-memory SQLite database.
  */
-export async function startServer() {
-  if (process.env.TEST_TARGET === 'worker') return startWorker();
+export async function startServer(extraEnv = {}) {
+  if (process.env.TEST_TARGET === 'worker') return startWorker(extraEnv);
   const db = await nodeSqlite(':memory:');
   const store = new Store(db);
   await store.migrate();
-  const handler = createHandler({ store, env, keys: new KeySet(async () => jwks), log: () => {} });
+  const handler = createHandler({ store, env: { ...env, ...extraEnv }, keys: new KeySet(async () => jwks), log: () => {} });
   const server = serve(handler);
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   return {
@@ -45,11 +45,11 @@ export async function startServer() {
   };
 }
 
-async function startWorker() {
+async function startWorker(extraEnv) {
   const root = join(dirname(fileURLToPath(import.meta.url)), '..');
   const work = mkdtempSync(join(tmpdir(), 'reader-worker-test-'));
   const port = 8900 + Math.floor(Math.random() * 90);
-  const vars = Object.entries({ ...env, TEST_JWKS: JSON.stringify(jwks) })
+  const vars = Object.entries({ ...env, ...extraEnv, TEST_JWKS: JSON.stringify(jwks) })
     .map(([k, v]) => `${k} = ${JSON.stringify(v)}`).join('\n');
   writeFileSync(join(work, 'wrangler.toml'), `name = "reader-sync-test"
 main = ${JSON.stringify(join(root, 'src/worker.js'))}

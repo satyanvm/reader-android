@@ -39,7 +39,7 @@ class SyncAccount(
     private val _stage = MutableStateFlow<Stage>(session?.let { Stage.SignedIn(it.email) } ?: Stage.SignedOut)
     val stage: StateFlow<Stage> = _stage.asStateFlow()
 
-    private val _providers = MutableStateFlow(AccountApi.Providers(apple = false, google = false))
+    private val _providers = MutableStateFlow(AccountApi.Providers(apple = false, google = false, emailCodes = false))
     val providers: StateFlow<AccountApi.Providers> = _providers.asStateFlow()
 
     /** Set when the server ended this session (password changed, signed out everywhere). */
@@ -57,8 +57,8 @@ class SyncAccount(
 
     suspend fun createAccount(email: String, password: String) {
         val email = clean(email)
-        api.signUp(email, password)
-        _stage.value = Stage.AwaitingCode(email, CodePurpose.ConfirmEmail)
+        val session = api.signUp(email, password)
+        if (session != null) signedIn(session) else _stage.value = Stage.AwaitingCode(email, CodePurpose.ConfirmEmail)
     }
 
     suspend fun signIn(email: String, password: String) {

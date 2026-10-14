@@ -24,13 +24,14 @@ const POSITION_ROUTE = /^\/v1\/reading-positions\/([^/]+)$/;
  * Accounts (see auth.js), JSON bodies, each success returning `{ token, account }`:
  *
  *   POST /v1/auth/signup           { email, password }          -> 202, a code is emailed
+ *                                                                (200 session if EMAIL_VERIFICATION=off)
  *   POST /v1/auth/verify           { email, code }              -> session
  *   POST /v1/auth/resend           { email }
  *   POST /v1/auth/signin           { email, password }          -> session | 403 verification_required
  *   POST /v1/auth/password/forgot  { email }                    -> a code is emailed
  *   POST /v1/auth/password/reset   { email, code, password }    -> session
  *   POST /v1/auth/apple | /google  { idToken }                  -> session
- *   GET  /v1/auth/providers        -> { apple, google }  (which sign-in buttons to show)
+ *   GET  /v1/auth/providers        -> { apple, google, emailCodes }  (which sign-in options to show)
  *   GET  /v1/me                    -> { email }
  *   POST /v1/auth/signout          -> ends this session
  *   GET  /healthz
@@ -50,6 +51,7 @@ export function createHandler({ store, env = {}, keys = new KeySet(), log = cons
       keys,
       pepper: env.PASSWORD_PEPPER ?? '',
       now,
+      emailCodes: String(env.EMAIL_VERIFICATION ?? 'on').toLowerCase() !== 'off',
     });
     const url = new URL(request.url);
     const { pathname } = url;
@@ -59,7 +61,10 @@ export function createHandler({ store, env = {}, keys = new KeySet(), log = cons
       if (pathname === '/v1/auth/providers' && method === 'GET') return json(200, auth.providers);
 
       const authRoutes = {
-        'POST /v1/auth/signup': async (b) => [202, await auth.signUp(b.email, b.password)],
+        'POST /v1/auth/signup': async (b) => {
+          const result = await auth.signUp(b.email, b.password);
+          return [result.token ? 200 : 202, result]; // a session when email codes are off
+        },
         'POST /v1/auth/verify': async (b) => [200, await auth.verifyEmail(b.email, b.code)],
         'POST /v1/auth/resend': async (b) => [200, await auth.resendCode(b.email)],
         'POST /v1/auth/signin': async (b) => [200, await auth.signIn(b.email, b.password)],

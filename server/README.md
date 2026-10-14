@@ -57,6 +57,7 @@ Passwords are hashed (see above); codes expire after 10 minutes, are single-use,
 |---|---|
 | `RESEND_API_KEY`, `MAIL_FROM` | Send the code emails with [Resend](https://resend.com). Without a key the server is in development mode: emails are only printed to its log |
 | `READER_DEV_MAIL_DIR` | Development: also write each email to this folder as JSON |
+| `EMAIL_VERIFICATION` | `off` skips the emailed code: sign-up signs straight in, and an unconfirmed account signs in with its password. Nobody proves they own the address, so set it back to `on` (the default) once `RESEND_API_KEY` delivers codes. `wrangler.toml` has it `off` for now. The apps hide "Forgot password?" while it's off |
 | `GOOGLE_CLIENT_IDS` | Comma-separated Google OAuth client ids allowed to sign in (the Mac app's iOS/macOS client, Android's, ...). Empty turns Google off |
 | `APPLE_AUDIENCES` | Comma-separated bundle ids / Services ids for Sign in with Apple (e.g. `io.github.satyanvm.reader`). Empty turns Apple off |
 
@@ -73,14 +74,14 @@ GET /healthz                             200
 Every `/v1/reading-positions` request needs `Authorization: Bearer <token>` (otherwise 401). Positions are per account.
 
 ```
-POST /v1/auth/signup           { email, password }        202, code emailed
+POST /v1/auth/signup           { email, password }        202, code emailed (200 session if EMAIL_VERIFICATION=off)
 POST /v1/auth/verify           { email, code }            session
 POST /v1/auth/resend           { email }
 POST /v1/auth/signin           { email, password }        session | 403 verification_required
 POST /v1/auth/password/forgot  { email }                  code emailed
 POST /v1/auth/password/reset   { email, code, password }  session
 POST /v1/auth/apple | google   { idToken }                session
-GET  /v1/auth/providers        { apple, google }
+GET  /v1/auth/providers        { apple, google, emailCodes }
 GET  /v1/me                    { email }
 POST /v1/auth/signout          ends this session
 ```

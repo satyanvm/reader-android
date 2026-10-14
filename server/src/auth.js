@@ -17,8 +17,14 @@ const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
  * account however the person signs in. All state, including rate limits, lives in the database.
  */
 export class Auth {
-  constructor(store, mailer, { appleAudiences = [], googleAudiences = [], keys, pepper = '', now = Date.now } = {}) {
+  constructor(store, mailer, { appleAudiences = [], googleAudiences = [], keys, pepper = '', now = Date.now, emailCodes = true } = {}) {
     this.store = store;
+    /**
+     * False (EMAIL_VERIFICATION=off) while code emails can't be sent: sign-up signs straight in
+     * and an unconfirmed account signs in with its password. Nobody proves they own the address,
+     * so turn it back on once email works.
+     */
+    this.emailCodes = emailCodes;
     this.mailer = mailer;
     this.audiences = { apple: appleAudiences, google: googleAudiences };
     this.keys = keys;
@@ -27,7 +33,7 @@ export class Auth {
   }
 
   get providers() {
-    return { apple: this.audiences.apple.length > 0, google: this.audiences.google.length > 0 };
+    return { apple: this.audiences.apple.length > 0, google: this.audiences.google.length > 0, emailCodes: this.emailCodes };
   }
 
   /** New account, or a fresh password and code for one whose email was never verified. */
@@ -47,6 +53,11 @@ export class Auth {
       if (raced?.email_verified_at) throw new HttpError(409, 'An account with this email already exists. Sign in instead.', 'account_exists');
       await this.store.setPassword(raced.id, hash);
     }
+    if (!this.emailCodes) {
+      const account = await this.store.accountByEmail(email);
+      await this.store.markVerified(account.id, this.now());
+      return this.session(account);
+    }
     await this.sendCode(email, 'verify');
     return { status: 'verification_required', email };
   }
@@ -63,7 +74,9 @@ export class Auth {
       await this.store.recordRateEvent(failures, this.now());
       throw new HttpError(401, 'Wrong email or password.', 'invalid_credentials');
     }
-    if (!account.email_verified_at) {
+    if (!account.email_verified_at && !this.emailCodes) {
+      await this.store.markVerified(account.id, this.now());
+    } else if (!account.email_verified_at) {
       await this.sendCode(email, 'verify').catch(() => {});
       throw new HttpError(403, 'Confirm your email first. We sent you a code.', 'verification_required');
     }

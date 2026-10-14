@@ -15,6 +15,9 @@ database_id = "8398bf6b-bcf3-4403-820c-db10d88a9483"
 GOOGLE_CLIENT_IDS = ""
 APPLE_AUDIENCES = ""
 MAIL_FROM = "Reader <onboarding@resend.dev>"
+# "off": no code emails; sign-up signs straight in with email and password. Set back to "on"
+# once RESEND_API_KEY can deliver codes.
+EMAIL_VERIFICATION = "off"
 
 # Secrets (not in this file): `npx wrangler secret put <NAME>`
 #   PASSWORD_PEPPER  required: random secret mixed into password hashes; never change it
