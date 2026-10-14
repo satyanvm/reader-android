@@ -19,6 +19,7 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 import okhttp3.mockwebserver.Dispatcher
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
@@ -30,6 +31,7 @@ import okhttp3.mockwebserver.RecordedRequest
  * sign-out, and a revoked token signing the device out.
  */
 @RunWith(RobolectricTestRunner::class)
+@Config(sdk = [34], application = android.app.Application::class)
 class AccountTest {
     private lateinit var server: FakeAccountServer
     private lateinit var account: SyncAccount
