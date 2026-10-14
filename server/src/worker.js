@@ -1,4 +1,5 @@
 import { Auth } from './auth.js';
+import { DigestMismatch, dbBlobs, r2Blobs } from './blobs.js';
 import { d1 } from './db.js';
 import { HttpError } from './errors.js';
 import { KeySet } from './jwt.js';
@@ -11,6 +12,12 @@ const MAX_BODY = 8 * 1024;
 const MAX_CLOCK_LEAD_MS = 24 * 60 * 60 * 1000;
 const DOCUMENT_ID = /^[A-Za-z0-9._-]{1,128}$/;
 const POSITION_ROUTE = /^\/v1\/reading-positions\/([^/]+)$/;
+const LIBRARY_ROUTE = /^\/v1\/library(?:\/([^/]+)(\/file)?)?$/;
+/** Book ids are the SHA-256 of the file. */
+const BOOK_ID = /^[0-9a-f]{64}$/;
+/** Largest book file accepted (Cloudflare caps request bodies at 100 MB). */
+const MAX_BOOK_BYTES = 100 * 1024 * 1024;
+const BOOK_FORMATS = new Set(['PDF', 'EPUB']);
 
 /**
  * The Reader sync API, as a fetch handler. Deployed as a Cloudflare Worker (D1 database); the
@@ -35,8 +42,16 @@ const POSITION_ROUTE = /^\/v1\/reading-positions\/([^/]+)$/;
  *   GET  /v1/me                    -> { email }
  *   POST /v1/auth/signout          -> ends this session
  *   GET  /healthz
+ *
+ * The library (which books the account has; a book added on one device appears on the others):
+ *
+ *   GET    /v1/library                 -> { books: [book] }, removed books included (removedAt set)
+ *   PUT    /v1/library/{id}            { title, format, sizeBytes, pageCount } -> 200 book (adds, or brings back)
+ *   DELETE /v1/library/{id}            -> 200 { removed }  (the file goes too)
+ *   PUT    /v1/library/{id}/file       the book's bytes (SHA-256 = {id}, sizeBytes long) -> 200 book
+ *   GET    /v1/library/{id}/file       -> the bytes | 404
  */
-export function createHandler({ store, env = {}, keys = new KeySet(), log = console.log, devSink }) {
+export function createHandler({ store, blobs, env = {}, keys = new KeySet(), log = console.log, devSink }) {
   const list = (v) => String(v ?? '').split(',').map((s) => s.trim()).filter(Boolean);
   const testMode = env.TEST_MODE === '1';
 
@@ -84,6 +99,12 @@ export function createHandler({ store, env = {}, keys = new KeySet(), log = cons
       if (testMode && pathname.startsWith('/__test/')) return testRoute(store, pathname, method, request, url);
 
       const token = bearer(request);
+      if (LIBRARY_ROUTE.test(pathname)) {
+        const accountId = await store.accountForToken(token);
+        if (accountId === null) throw new HttpError(401, 'missing or invalid token', 'unauthorized');
+        return await libraryRoute({ store, blobs, accountId, request, now: now() });
+      }
+
       if (pathname === '/v1/me' || pathname === '/v1/auth/signout' || POSITION_ROUTE.test(pathname)) {
         const accountId = await store.accountForToken(token);
         if (accountId === null) throw new HttpError(401, 'missing or invalid token', 'unauthorized');
@@ -123,10 +144,68 @@ export function createHandler({ store, env = {}, keys = new KeySet(), log = cons
   };
 }
 
+async function libraryRoute({ store, blobs, accountId, request, now }) {
+  const [, rawId, file] = LIBRARY_ROUTE.exec(new URL(request.url).pathname);
+  const method = request.method;
+  if (rawId === undefined) {
+    if (method !== 'GET') return json(405, { error: 'method not allowed' }, { Allow: 'GET' });
+    return json(200, { books: await store.library(accountId) });
+  }
+  const documentId = rawId.toLowerCase();
+  if (!BOOK_ID.test(documentId)) throw new HttpError(400, 'bad document id');
+  const key = `${accountId}/${documentId}`;
+  if (!file) {
+    if (method === 'PUT') return json(200, await store.putBook(accountId, validateBook(await readJson(request), documentId), now));
+    if (method === 'DELETE') {
+      const removed = await store.removeBook(accountId, documentId, now);
+      if (blobs) await blobs.delete(key);
+      return json(200, { removed });
+    }
+    return json(405, { error: 'method not allowed' }, { Allow: 'PUT, DELETE' });
+  }
+  if (!blobs) throw new HttpError(503, 'book files are not stored on this server', 'no_storage');
+  const book = await store.book(accountId, documentId);
+  if (method === 'GET') {
+    const blob = book && book.removedAt === null && book.hasFile ? await blobs.get(key) : null;
+    if (!blob) throw new HttpError(404, 'no file for this book');
+    return new Response(blob.body, {
+      status: 200,
+      headers: { 'Content-Type': 'application/octet-stream', 'Content-Length': String(blob.size), 'Cache-Control': 'no-store' },
+    });
+  }
+  if (method === 'PUT') {
+    if (!book || book.removedAt !== null) throw new HttpError(409, 'add the book to the library first', 'not_in_library');
+    const length = Number(request.headers.get('content-length') ?? NaN);
+    if (!Number.isSafeInteger(length) || length <= 0) throw new HttpError(411, 'Content-Length is required');
+    if (length > MAX_BOOK_BYTES) throw new HttpError(413, 'book is too large to sync', 'too_large');
+    if (length !== book.sizeBytes) throw new HttpError(422, 'the file is not the size the library says', 'size_mismatch');
+    try {
+      await blobs.put(key, request.body, { sha256: documentId });
+    } catch (e) {
+      if (e instanceof DigestMismatch) throw new HttpError(422, 'the file does not match its id', 'digest_mismatch');
+      throw e;
+    }
+    await store.setHasFile(accountId, documentId, true);
+    return json(200, await store.book(accountId, documentId));
+  }
+  return json(405, { error: 'method not allowed' }, { Allow: 'GET, PUT' });
+}
+
+function validateBook(b, documentId) {
+  const bad = (msg) => new HttpError(422, msg);
+  if (b === null || typeof b !== 'object' || Array.isArray(b)) throw bad('book must be an object');
+  const title = typeof b.title === 'string' ? b.title.trim().slice(0, 500) : '';
+  if (!title) throw bad('title must be a non-empty string');
+  if (!BOOK_FORMATS.has(b.format)) throw bad('format must be PDF or EPUB');
+  if (!Number.isSafeInteger(b.sizeBytes) || b.sizeBytes < 1) throw bad('sizeBytes must be a positive integer');
+  if (!Number.isSafeInteger(b.pageCount) || b.pageCount < 1 || b.pageCount > 1_000_000) throw bad('pageCount must be an integer in [1, 1000000]');
+  return { documentId, title, format: b.format, sizeBytes: b.sizeBytes, pageCount: b.pageCount };
+}
+
 /** Test-only helpers (TEST_MODE=1): reset the database, make a token, read dev mail. */
 async function testRoute(store, pathname, method, request, url) {
   if (pathname === '/__test/reset' && method === 'POST') {
-    await store.db.batch(['reading_positions', 'tokens', 'identities', 'verification_codes', 'rate_events', 'dev_mail', 'accounts']
+    await store.db.batch(['reading_positions', 'library_books', 'book_files', 'book_chunks', 'tokens', 'identities', 'verification_codes', 'rate_events', 'dev_mail', 'accounts']
       .map((t) => [`DELETE FROM ${t}`]));
     return json(200, { ok: true });
   }
@@ -217,13 +296,14 @@ let ready; // one migration per isolate
 let keys;
 export default {
   async fetch(request, env) {
-    const store = new Store(d1(env.DB));
+    const db = d1(env.DB);
+    const store = new Store(db);
     ready ??= store.migrate().catch((e) => {
       ready = undefined;
       throw e;
     });
     await ready;
     keys ??= env.TEST_MODE === '1' && env.TEST_JWKS ? new KeySet(async () => JSON.parse(env.TEST_JWKS)) : new KeySet();
-    return createHandler({ store, env, keys })(request);
+    return createHandler({ store, blobs: env.BOOKS ? r2Blobs(env.BOOKS) : dbBlobs(db), env, keys })(request);
   },
 };

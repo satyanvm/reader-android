@@ -10,6 +10,12 @@ binding = "DB"
 database_name = "reader"
 database_id = "8398bf6b-bcf3-4403-820c-db10d88a9483"
 
+# Book files are kept in the D1 database above. To keep them in R2 instead (needs R2 enabled on
+# the account), create a bucket with `npx wrangler r2 bucket create reader-books` and uncomment:
+# [[r2_buckets]]
+# binding = "BOOKS"
+# bucket_name = "reader-books"
+
 [vars]
 # Comma-separated. Empty turns that sign-in off.
 GOOGLE_CLIENT_IDS = ""

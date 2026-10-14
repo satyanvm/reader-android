@@ -1,8 +1,8 @@
 # Reader sync server
 
-Stores each account's reading position per book, so the Android and Mac apps open a book where you left off on any device. It implements the contract in [../docs/position-sync.md](../docs/position-sync.md).
+Stores each account's library (the books, with their files) and reading position per book, so the Android and Mac apps open a book where you left off on any device. It implements the contract in [../docs/position-sync.md](../docs/position-sync.md).
 
-It runs on **Cloudflare Workers with a D1 database** (deployed at https://reader-sync.satyanarayanv2050.workers.dev), and the same code runs locally on Node 22.13+ with SQLite for development. No runtime dependencies; `wrangler` is a dev dependency for deploying.
+It runs on **Cloudflare Workers with a D1 database** (book files are kept in it too, in 1 MB chunks) (deployed at https://reader-sync.satyanarayanv2050.workers.dev), and the same code runs locally on Node 22.13+ with SQLite for development. No runtime dependencies; `wrangler` is a dev dependency for deploying.
 
 ## Deploy (Cloudflare)
 
@@ -14,7 +14,9 @@ npx wrangler login
 npm run deploy
 ```
 
-`wrangler.toml` has the D1 binding (database `reader`) and the non-secret settings. Secrets are set once:
+`wrangler.toml` has the D1 binding (database `reader`) and the non-secret settings. Book files live in the same D1 database, so nothing else needs setting up. D1's free plan allows 500 MB per database, shared with everything else in it. To keep files in R2 instead (R2 must be enabled on the account, which asks for a payment method), create a bucket with `npx wrangler r2 bucket create reader-books` and uncomment the `[[r2_buckets]]` block in `wrangler.toml`; the Worker uses R2 whenever a `BOOKS` bucket is bound.
+
+Secrets are set once:
 
 ```bash
 npx wrangler secret put PASSWORD_PEPPER
@@ -71,7 +73,17 @@ PUT /v1/reading-positions/{documentId}   body: position → 200 the stored winne
 GET /healthz                             200
 ```
 
-Every `/v1/reading-positions` request needs `Authorization: Bearer <token>` (otherwise 401). Positions are per account.
+```
+GET    /v1/library             { books: [...] }, removed books included (removedAt set)
+PUT    /v1/library/{id}        { title, format, sizeBytes, pageCount } → the book (adds, or brings back)
+DELETE /v1/library/{id}        removes it (and its file) on every device
+PUT    /v1/library/{id}/file   the bytes (sizeBytes long, SHA-256 = {id}); up to 100 MB
+GET    /v1/library/{id}/file   the bytes | 404
+```
+
+The server checks an upload's size; the apps check each downloaded book's SHA-256 before importing it (hashing a large book doesn't fit the free plan's CPU budget).
+
+Every `/v1/reading-positions` and `/v1/library` request needs `Authorization: Bearer <token>` (otherwise 401). Positions are per account.
 
 ```
 POST /v1/auth/signup           { email, password }        202, code emailed (EMAIL_CODES off: session)

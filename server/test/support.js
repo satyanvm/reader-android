@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { nodeSqlite } from '../src/db.js';
+import { dbBlobs } from '../src/blobs.js';
 import { KeySet } from '../src/jwt.js';
 import { serve } from '../src/node-http.js';
 import { Store } from '../src/store.js';
@@ -38,7 +39,7 @@ export async function startServer(overrides = {}) {
   const db = await nodeSqlite(':memory:');
   const store = new Store(db);
   await store.migrate();
-  const handler = createHandler({ store, env, keys: new KeySet(async () => jwks), log: () => {} });
+  const handler = createHandler({ store, blobs: dbBlobs(db), env, keys: new KeySet(async () => jwks), log: () => {} });
   const server = serve(handler);
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   return {

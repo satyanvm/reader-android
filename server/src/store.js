@@ -1,7 +1,7 @@
 import { randomToken, sha256Hex } from './crypto.js';
 
 /**
- * Accounts, sessions and reading positions, over the async `Db` interface (D1 or node:sqlite).
+ * Accounts, sessions, reading positions and each account's library, over the async `Db` interface (D1 or node:sqlite).
  *
  * D1 has no interactive transactions, so the position compare-and-store is a compare-and-swap:
  * read, decide in JavaScript (UTF-16 device-id order, like the clients), then write only if the
@@ -52,6 +52,20 @@ export class Store {
           email TEXT,
           created_at INTEGER NOT NULL,
           PRIMARY KEY (provider, subject))`],
+      [`CREATE TABLE IF NOT EXISTS library_books (
+          account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+          document_id TEXT NOT NULL,
+          title TEXT NOT NULL,
+          format TEXT NOT NULL,
+          size_bytes INTEGER NOT NULL,
+          page_count INTEGER NOT NULL,
+          has_file INTEGER NOT NULL DEFAULT 0,
+          added_at INTEGER NOT NULL,
+          removed_at INTEGER,
+          PRIMARY KEY (account_id, document_id))`],
+      // Book files stored in the database (blobs.js dbBlobs), keyed "<account>/<documentId>".
+      ['CREATE TABLE IF NOT EXISTS book_files (key TEXT PRIMARY KEY, size INTEGER NOT NULL, chunks INTEGER NOT NULL)'],
+      ['CREATE TABLE IF NOT EXISTS book_chunks (key TEXT NOT NULL, idx INTEGER NOT NULL, data BLOB NOT NULL, PRIMARY KEY (key, idx))'],
       ['CREATE TABLE IF NOT EXISTS rate_events (key TEXT NOT NULL, at INTEGER NOT NULL)'],
       ['CREATE INDEX IF NOT EXISTS rate_events_key ON rate_events(key, at)'],
       [`CREATE TABLE IF NOT EXISTS dev_mail (
@@ -112,7 +126,8 @@ export class Store {
     return this.db.all(`
       SELECT a.id, a.name, a.email, a.email_verified_at IS NOT NULL AS verified,
         (SELECT COUNT(*) FROM tokens t WHERE t.account_id = a.id) AS tokens,
-        (SELECT COUNT(*) FROM reading_positions p WHERE p.account_id = a.id) AS positions
+        (SELECT COUNT(*) FROM reading_positions p WHERE p.account_id = a.id) AS positions,
+        (SELECT COUNT(*) FROM library_books b WHERE b.account_id = a.id AND b.removed_at IS NULL) AS books
       FROM accounts a ORDER BY a.id`);
   }
 
@@ -200,6 +215,39 @@ export class Store {
     return this.db.all('SELECT to_addr AS "to", subject, text, created_at FROM dev_mail WHERE to_addr = ? ORDER BY id', to);
   }
 
+  // Library: which books are in the account, so a book added on one device appears on the others.
+  // A removed book stays as a tombstone (removed_at), so devices that have it remove it too.
+
+  async library(accountId) {
+    return (await this.db.all('SELECT * FROM library_books WHERE account_id = ? ORDER BY added_at', accountId)).map(toBook);
+  }
+
+  async book(accountId, documentId) {
+    const row = await this.db.first('SELECT * FROM library_books WHERE account_id = ? AND document_id = ?', accountId, documentId);
+    return row ? toBook(row) : null;
+  }
+
+  /** Adds the book, or brings back a removed one; updates the details of one already there. */
+  async putBook(accountId, b, now) {
+    await this.db.run(`INSERT INTO library_books (account_id, document_id, title, format, size_bytes, page_count, added_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT (account_id, document_id) DO UPDATE SET title = excluded.title, format = excluded.format,
+        size_bytes = excluded.size_bytes, page_count = excluded.page_count,
+        added_at = CASE WHEN removed_at IS NULL THEN added_at ELSE excluded.added_at END, removed_at = NULL`,
+      accountId, b.documentId, b.title, b.format, b.sizeBytes, b.pageCount, now);
+    return this.book(accountId, b.documentId);
+  }
+
+  async setHasFile(accountId, documentId, hasFile) {
+    await this.db.run('UPDATE library_books SET has_file = ? WHERE account_id = ? AND document_id = ?', hasFile ? 1 : 0, accountId, documentId);
+  }
+
+  /** Marks the book removed; false if the account never had it. */
+  async removeBook(accountId, documentId, now) {
+    return (await this.db.run('UPDATE library_books SET removed_at = ?, has_file = 0 WHERE account_id = ? AND document_id = ? AND removed_at IS NULL',
+      now, accountId, documentId)).changes === 1;
+  }
+
   // Positions
 
   async get(accountId, documentId) {
@@ -242,6 +290,19 @@ export class Store {
 export function isNewer(a, b) {
   if (a.hlc !== b.hlc) return a.hlc > b.hlc;
   return a.deviceId > b.deviceId;
+}
+
+function toBook(row) {
+  return {
+    documentId: row.document_id,
+    title: row.title,
+    format: row.format,
+    sizeBytes: Number(row.size_bytes),
+    pageCount: Number(row.page_count),
+    hasFile: Boolean(row.has_file),
+    addedAt: Number(row.added_at),
+    removedAt: row.removed_at === null || row.removed_at === undefined ? null : Number(row.removed_at),
+  };
 }
 
 function toPosition(row) {
