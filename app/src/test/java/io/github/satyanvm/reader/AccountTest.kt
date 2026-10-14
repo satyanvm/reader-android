@@ -125,7 +125,24 @@ class AccountTest {
     @Test
     fun `providers say which buttons to show`() = runBlocking<Unit> {
         account.loadProviders()
-        assertEquals(AccountApi.Providers(apple = false, google = true), account.providers.value)
+        assertEquals(AccountApi.Providers(apple = false, google = true, emailCodes = true), account.providers.value)
+        server.emailCodes = false
+        account.loadProviders()
+        assertFalse(account.providers.value.emailCodes)
+    }
+
+    @Test
+    fun `with email codes off, creating an account signs in at once`() = runBlocking<Unit> {
+        server.emailCodes = false
+        account.createAccount("  Reader@Example.com ", "correct horse")
+        assertEquals(SyncAccount.Stage.SignedIn("reader@example.com"), account.stage.value)
+        assertEquals(1, signIns)
+        assertNull(server.lastCode)
+
+        val other = newAccount()
+        other.signOut()
+        other.signIn("reader@example.com", "correct horse")
+        assertEquals(SyncAccount.Stage.SignedIn("reader@example.com"), other.stage.value)
     }
 
     @Test
@@ -193,6 +210,7 @@ private class FakeAccountServer {
     private val codes = mutableMapOf<String, String>()
     val sessions = mutableMapOf<String, String>()
     var lastCode: String? = null
+    var emailCodes = true
     var positionPuts = 0
     private val positions = mutableMapOf<String, JSONObject>()
     private var nextCode = 123456
@@ -243,8 +261,13 @@ private class FakeAccountServer {
     private fun route(method: String, path: String, b: JSONObject, bearer: String?): Pair<Int, JSONObject> {
         val email = b.optString("email")
         return when ("$method $path") {
-            "GET /v1/auth/providers" -> 200 to JSONObject().put("apple", false).put("google", true)
-            "POST /v1/auth/signup" -> {
+            "GET /v1/auth/providers" -> 200 to JSONObject().put("apple", false).put("google", true).put("emailCodes", emailCodes)
+            "POST /v1/auth/signup" -> if (!emailCodes) {
+                if (email in passwords) return error(409, "account_exists", "An account with this email already exists.")
+                passwords[email] = b.getString("password")
+                verified += email
+                session(email)
+            } else {
                 passwords[email] = b.getString("password")
                 sendCode(email)
                 202 to JSONObject().put("status", "verification_sent")

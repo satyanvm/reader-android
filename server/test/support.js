@@ -18,12 +18,13 @@ export const signingKey = generateKeyPairSync('rsa', { modulusLength: 2048 });
 export const otherKey = generateKeyPairSync('rsa', { modulusLength: 2048 });
 export const jwks = { keys: [{ ...signingKey.publicKey.export({ format: 'jwk' }), kid: 'test-key', alg: 'RS256', use: 'sig' }] };
 
-const env = {
+const baseEnv = {
   TEST_MODE: '1',
   DEV_MAIL: '1',
   GOOGLE_CLIENT_IDS: GOOGLE_CLIENT,
   APPLE_AUDIENCES: APPLE_BUNDLE,
   PASSWORD_PEPPER: 'test-pepper',
+  EMAIL_CODES: '1',
 };
 
 /**
@@ -31,8 +32,9 @@ const env = {
  * Workers runtime with a local D1 (`wrangler dev`); otherwise the same handler runs in-process
  * on Node with an in-memory SQLite database.
  */
-export async function startServer() {
-  if (process.env.TEST_TARGET === 'worker') return startWorker();
+export async function startServer(overrides = {}) {
+  const env = { ...baseEnv, ...overrides };
+  if (process.env.TEST_TARGET === 'worker') return startWorker(env);
   const db = await nodeSqlite(':memory:');
   const store = new Store(db);
   await store.migrate();
@@ -45,7 +47,7 @@ export async function startServer() {
   };
 }
 
-async function startWorker() {
+async function startWorker(env) {
   const root = join(dirname(fileURLToPath(import.meta.url)), '..');
   const work = mkdtempSync(join(tmpdir(), 'reader-worker-test-'));
   const port = 8900 + Math.floor(Math.random() * 90);

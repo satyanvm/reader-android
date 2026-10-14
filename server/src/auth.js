@@ -17,8 +17,10 @@ const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
  * account however the person signs in. All state, including rate limits, lives in the database.
  */
 export class Auth {
-  constructor(store, mailer, { appleAudiences = [], googleAudiences = [], keys, pepper = '', now = Date.now } = {}) {
+  constructor(store, mailer, { appleAudiences = [], googleAudiences = [], keys, pepper = '', emailCodes = true, now = Date.now } = {}) {
     this.store = store;
+    // Off: email + password works without a code (nothing is emailed), until sending is set up.
+    this.emailCodes = emailCodes;
     this.mailer = mailer;
     this.audiences = { apple: appleAudiences, google: googleAudiences };
     this.keys = keys;
@@ -27,13 +29,18 @@ export class Auth {
   }
 
   get providers() {
-    return { apple: this.audiences.apple.length > 0, google: this.audiences.google.length > 0 };
+    return { apple: this.audiences.apple.length > 0, google: this.audiences.google.length > 0, emailCodes: this.emailCodes };
   }
 
-  /** New account, or a fresh password and code for one whose email was never verified. */
+  /**
+   * New account, or a fresh password and code for one whose email was never verified. With
+   * email codes off, the account is signed in at once and an existing account is never taken
+   * over: nobody proved the address, so an earlier sign-up's password must not be replaced.
+   */
   async signUp(rawEmail, password) {
     const email = normalizeEmail(rawEmail);
     checkPassword(password);
+    if (!this.emailCodes) return this.signUpWithoutCode(email, password);
     const existing = await this.store.accountByEmail(email);
     if (existing?.email_verified_at) {
       throw new HttpError(409, 'An account with this email already exists. Sign in instead.', 'account_exists');
@@ -51,6 +58,14 @@ export class Auth {
     return { status: 'verification_required', email };
   }
 
+  async signUpWithoutCode(email, password) {
+    const exists = new HttpError(409, 'An account with this email already exists. Sign in instead.', 'account_exists');
+    if (await this.store.accountByEmail(email)) throw exists;
+    // Left unverified, so a later Google sign-in with this email still discards this password.
+    if ((await this.store.createEmailAccount(email, await hashPassword(password, this.pepper))) === null) throw exists;
+    return this.session(await this.store.accountByEmail(email));
+  }
+
   async signIn(rawEmail, password) {
     const email = normalizeEmail(rawEmail);
     const failures = `login:${email}`;
@@ -63,7 +78,7 @@ export class Auth {
       await this.store.recordRateEvent(failures, this.now());
       throw new HttpError(401, 'Wrong email or password.', 'invalid_credentials');
     }
-    if (!account.email_verified_at) {
+    if (!account.email_verified_at && this.emailCodes) {
       await this.sendCode(email, 'verify').catch(() => {});
       throw new HttpError(403, 'Confirm your email first. We sent you a code.', 'verification_required');
     }

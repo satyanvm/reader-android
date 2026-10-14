@@ -75,9 +75,9 @@ sync.token=<bearer token from server/bin/admin.js, used while nobody is signed i
 google.webClientId=<id>.apps.googleusercontent.com
 ```
 
-Positions are kept per account. People sign in with email and password (the email confirmed with an emailed code) or with Apple or Google; one email is one account however they sign in. See [server/README.md](../server/README.md).
+Positions are kept per account. People sign in with email and password (the email confirmed with an emailed code when the server has `EMAIL_CODES` on) or with Apple or Google; one email is one account however they sign in. See [server/README.md](../server/README.md).
 
-On Android, sign in from the account button at the top of the Library: email and password (new accounts and password resets confirm a 6-digit emailed code), or "Continue with Google" when the server has Google turned on and the build has `google.webClientId`. Signing in pushes any reading done before it; a token the server rejects (password reset elsewhere, signed out everywhere) signs the device out and asks to sign in again, keeping unsynced positions until then.
+On Android, sign in from the account button at the top of the Library: email and password (with `EMAIL_CODES` on, new accounts and password resets confirm a 6-digit emailed code), or "Continue with Google" when the server has Google turned on and the build has `google.webClientId`. Signing in pushes any reading done before it; a token the server rejects (password reset elsewhere, signed out everywhere) signs the device out and asks to sign in again, keeping unsynced positions until then.
 
 Sign in with Google on Android needs, in one Google Cloud project: an OAuth client of type **Web application** (its id is `google.webClientId`, and it goes in the server's `GOOGLE_CLIENT_IDS`, because Google issues Android's ID tokens for it), and an OAuth client of type **Android** for package `io.github.satyanvm.reader` with the signing certificate's SHA-1 (`./gradlew :app:signingReport`).
 
