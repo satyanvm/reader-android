@@ -1,16 +1,27 @@
 package io.github.satyanvm.reader.reader
 
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
 import android.graphics.Bitmap
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
@@ -44,6 +55,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
@@ -54,17 +66,21 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.satyanvm.reader.text.EpubBook
 import io.github.satyanvm.reader.text.TextFlow
 import io.github.satyanvm.reader.text.TextTheme
+import kotlin.math.roundToInt
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
-import kotlin.math.roundToInt
 
 private val ZOOM_STEPS = listOf(1f, 1.25f, 1.5f, 2f, 3f, 4f)
 private val TEXT_STEPS = listOf(0.7f, 0.8f, 0.9f, 1f, 1.15f, 1.3f, 1.5f, 1.75f, 2f)
@@ -88,90 +104,144 @@ fun ReaderScreen(vm: ReaderViewModel, onBack: () -> Unit) {
 
     NoticeEffect(state.notice, snackbar, controller)
 
+    // Reading is full screen: the bars and the scrubber show on a tap and hide on the next one.
+    // They float over the page rather than pushing it around, so showing them never reflows text.
+    var controlsShown by rememberSaveable { mutableStateOf(false) }
+    val showControls = controlsShown || state.document == null
+    ImmersiveEffect(immersive = !showControls)
+    val toggleControls = { controlsShown = !controlsShown }
+
     Scaffold(
         containerColor = colors.background,
-        topBar = {
-            TopAppBar(
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = colors.background,
-                    titleContentColor = colors.text,
-                    navigationIconContentColor = colors.text,
-                    actionIconContentColor = colors.text,
-                ),
-                title = { Text(state.title, maxLines = 1) },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
-                    }
-                },
-                actions = {
-                    if (state.document == null) return@TopAppBar
-                    if (textMode) {
-                        TextSettingsMenu(
-                            scale = state.textScale,
-                            theme = theme,
-                            flow = flow,
-                            color = colors.text,
-                            onScale = vm::setTextScale,
-                            onTheme = vm::setTheme,
-                            onFlow = vm::setFlow,
-                        )
-                    } else {
-                        TextButton(
-                            onClick = { controller.setZoom(ZOOM_STEPS.lastOrNull { it < state.zoom } ?: 1f) },
-                            enabled = state.zoom > 1f,
-                        ) { Text("−") }
-                        TextButton(
-                            onClick = { controller.setZoom(ZOOM_STEPS.firstOrNull { it > state.zoom } ?: state.zoom) },
-                            enabled = state.zoom < ZOOM_STEPS.last(),
-                        ) { Text("+") }
-                    }
-                    OverflowMenu(
-                        mode = state.mode.takeIf { state.document is PagedDocument },
-                        onMode = vm::setMode,
-                        onRestart = controller::restartFromBeginning,
-                    )
-                },
-            )
-        },
-        bottomBar = {
-            state.document?.let { doc ->
-                ProgressBar(
-                    pageIndex = state.pageIndex,
-                    pageCount = doc.pageCount,
-                    unit = if (doc is EpubBook) "Chapter " else "",
-                    color = colors.text,
-                    background = colors.background,
-                    onSeek = controller::goToPage,
-                )
-            }
-        },
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         snackbarHost = { SnackbarHost(snackbar) },
     ) { padding ->
-        Box(Modifier.padding(padding).fillMaxSize(), contentAlignment = Alignment.Center) {
-            val doc = state.document
-            when {
-                state.phase == Phase.Loading -> CircularProgressIndicator()
-                state.phase is Phase.Failed -> Text((state.phase as Phase.Failed).message)
-                doc == null -> Unit
-                doc is EpubBook -> EpubPages(doc, state, controller, colors, paged)
-                doc !is PagedDocument -> Unit
-                textMode && text != null -> TextPages(text!!, doc, state, controller, colors, paged)
-                else -> PdfPages(doc, state, controller)
+        Box(Modifier.padding(padding).fillMaxSize()) {
+            Box(
+                Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.displayCutout),
+                contentAlignment = Alignment.Center,
+            ) {
+                val doc = state.document
+                when {
+                    state.phase == Phase.Loading -> CircularProgressIndicator()
+                    state.phase is Phase.Failed -> Text((state.phase as Phase.Failed).message)
+                    doc == null -> Unit
+                    doc is EpubBook -> EpubPages(doc, state, controller, colors, paged, toggleControls)
+                    doc !is PagedDocument -> Unit
+                    textMode && text != null -> TextPages(text!!, doc, state, controller, colors, paged, toggleControls)
+                    else -> PdfPages(doc, state, controller, toggleControls)
+                }
+            }
+            AnimatedVisibility(
+                visible = showControls,
+                enter = slideInVertically { -it } + fadeIn(),
+                exit = slideOutVertically { -it } + fadeOut(),
+                modifier = Modifier.align(Alignment.TopCenter),
+            ) {
+                TopAppBar(
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = colors.background,
+                        titleContentColor = colors.text,
+                        navigationIconContentColor = colors.text,
+                        actionIconContentColor = colors.text,
+                    ),
+                    title = { Text(state.title, maxLines = 1) },
+                    navigationIcon = {
+                        IconButton(onClick = onBack) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        }
+                    },
+                    actions = {
+                        if (state.document == null) return@TopAppBar
+                        if (textMode) {
+                            TextSettingsMenu(
+                                scale = state.textScale,
+                                theme = theme,
+                                color = colors.text,
+                                onScale = vm::setTextScale,
+                                onTheme = vm::setTheme,
+                            )
+                        } else {
+                            TextButton(
+                                onClick = { controller.setZoom(ZOOM_STEPS.lastOrNull { it < state.zoom } ?: 1f) },
+                                enabled = state.zoom > 1f,
+                            ) { Text("−") }
+                            TextButton(
+                                onClick = { controller.setZoom(ZOOM_STEPS.firstOrNull { it > state.zoom } ?: state.zoom) },
+                                enabled = state.zoom < ZOOM_STEPS.last(),
+                            ) { Text("+") }
+                        }
+                        OverflowMenu(
+                            view = if (textMode) ReadingView.Text(flow) else ReadingView.Pages,
+                            canShowPages = state.document is PagedDocument,
+                            onView = { view ->
+                                when (view) {
+                                    is ReadingView.Text -> {
+                                        vm.setFlow(view.flow)
+                                        if (!textMode) vm.setMode(ReadingMode.TEXT)
+                                    }
+                                    ReadingView.Pages -> vm.setMode(ReadingMode.PAGES)
+                                }
+                            },
+                            onRestart = controller::restartFromBeginning,
+                        )
+                    },
+                )
+            }
+            state.document?.let { doc ->
+                AnimatedVisibility(
+                    visible = showControls,
+                    enter = slideInVertically { it } + fadeIn(),
+                    exit = slideOutVertically { it } + fadeOut(),
+                    modifier = Modifier.align(Alignment.BottomCenter),
+                ) {
+                    ProgressBar(
+                        pageIndex = state.pageIndex,
+                        pageCount = doc.pageCount,
+                        unit = if (doc is EpubBook) "Chapter " else "",
+                        color = colors.text,
+                        background = colors.background,
+                        onSeek = controller::goToPage,
+                    )
+                }
             }
         }
     }
+}
+
+/** Hides the status and navigation bars while reading; a swipe from the edge brings them back briefly. */
+@Composable
+private fun ImmersiveEffect(immersive: Boolean) {
+    val view = LocalView.current
+    DisposableEffect(view, immersive) {
+        val window = view.context.findActivity()?.window
+        val bars = window?.let { WindowCompat.getInsetsController(it, view) }
+        bars?.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        if (immersive) bars?.hide(WindowInsetsCompat.Type.systemBars())
+        else bars?.show(WindowInsetsCompat.Type.systemBars())
+        onDispose { bars?.show(WindowInsetsCompat.Type.systemBars()) }
+    }
+}
+
+private tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
+}
+
+/** What the book is shown as: flowing text (a screen at a time, or one long scroll) or the PDF's own pages. */
+private sealed interface ReadingView {
+    data class Text(val flow: TextFlow) : ReadingView
+    data object Pages : ReadingView
 }
 
 @Composable
 private fun TextSettingsMenu(
     scale: Float,
     theme: TextTheme,
-    flow: TextFlow,
     color: Color,
     onScale: (Float) -> Unit,
     onTheme: (TextTheme) -> Unit,
-    onFlow: (TextFlow) -> Unit,
 ) {
     var open by remember { mutableStateOf(false) }
     TextButton(onClick = { open = true }) { Text("Aa", color = color) }
@@ -195,43 +265,33 @@ private fun TextSettingsMenu(
                 onClick = { onTheme(t) },
             )
         }
-        HorizontalDivider()
-        for (f in TextFlow.entries) {
-            DropdownMenuItem(
-                text = { Text(f.label) },
-                leadingIcon = { if (f == flow) Icon(Icons.Filled.Check, contentDescription = null) },
-                onClick = { onFlow(f) },
-            )
-        }
     }
 }
 
 @Composable
-private fun OverflowMenu(mode: ReadingMode?, onMode: (ReadingMode) -> Unit, onRestart: () -> Unit) {
+private fun OverflowMenu(
+    view: ReadingView,
+    canShowPages: Boolean,
+    onView: (ReadingView) -> Unit,
+    onRestart: () -> Unit,
+) {
     var open by remember { mutableStateOf(false) }
     IconButton(onClick = { open = true }) {
         Icon(Icons.Filled.MoreVert, contentDescription = "More")
     }
     DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-        if (mode != null) {
+        val views = TextFlow.entries.map { ReadingView.Text(it) } + listOfNotNull(ReadingView.Pages.takeIf { canShowPages })
+        for (v in views) {
             DropdownMenuItem(
-                text = { Text("Flowing text") },
-                leadingIcon = { if (mode == ReadingMode.TEXT) Icon(Icons.Filled.Check, contentDescription = null) },
+                text = { Text(v.label) },
+                leadingIcon = { if (v == view) Icon(Icons.Filled.Check, contentDescription = null) },
                 onClick = {
                     open = false
-                    onMode(ReadingMode.TEXT)
+                    onView(v)
                 },
             )
-            DropdownMenuItem(
-                text = { Text("Original pages") },
-                leadingIcon = { if (mode == ReadingMode.PAGES) Icon(Icons.Filled.Check, contentDescription = null) },
-                onClick = {
-                    open = false
-                    onMode(ReadingMode.PAGES)
-                },
-            )
-            HorizontalDivider()
         }
+        HorizontalDivider()
         DropdownMenuItem(
             text = { Text("Start from the beginning") },
             onClick = {
@@ -241,6 +301,12 @@ private fun OverflowMenu(mode: ReadingMode?, onMode: (ReadingMode) -> Unit, onRe
         )
     }
 }
+
+private val ReadingView.label: String
+    get() = when (this) {
+        is ReadingView.Text -> "Flowing text: ${flow.label.replaceFirstChar { it.lowercase() }}"
+        ReadingView.Pages -> "Original pages"
+    }
 
 /** Play Books-style scrubber: drag to preview a page number, release to jump there. */
 @Composable
@@ -309,9 +375,9 @@ private fun NoticeEffect(notice: Notice?, snackbar: SnackbarHostState, controlle
 }
 
 @Composable
-private fun PdfPages(doc: PagedDocument, state: ReaderUiState, controller: ReaderController) {
+private fun PdfPages(doc: PagedDocument, state: ReaderUiState, controller: ReaderController, onTap: () -> Unit) {
     val density = LocalDensity.current
-    BoxWithConstraints(Modifier.fillMaxSize().background(Color(0xFFE0E0E0))) {
+    BoxWithConstraints(Modifier.fillMaxSize().background(Color(0xFFE0E0E0)).readerTaps(null, onTap)) {
         val viewportWidthPx = constraints.maxWidth
         val viewportHeightPx = constraints.maxHeight
         val layoutKey = state.layoutKey(viewportWidthPx)

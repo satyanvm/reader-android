@@ -110,6 +110,7 @@ internal fun TextPages(
     controller: ReaderController,
     colors: ReaderColors,
     paged: Boolean,
+    onMenuTap: () -> Unit,
 ) {
     val density = LocalDensity.current
     BoxWithConstraints(Modifier.fillMaxSize().background(colors.background)) {
@@ -131,7 +132,7 @@ internal fun TextPages(
             fromItem = { index, fraction -> if (index in text.loaded) index to fraction else index to 0f },
         )
 
-        TextList(listState, pager, margin, maxHeight, colors) {
+        TextList(listState, pager, margin, maxHeight, colors, onMenuTap) {
             items(count = text.pageCount, key = { it }) { index ->
                 TextPage(text, pdf, index, columnWidthPx, style, colors, pager)
             }
@@ -197,6 +198,7 @@ internal fun EpubPages(
     controller: ReaderController,
     colors: ReaderColors,
     paged: Boolean,
+    onMenuTap: () -> Unit,
 ) {
     val density = LocalDensity.current
     BoxWithConstraints(Modifier.fillMaxSize().background(colors.background)) {
@@ -220,7 +222,7 @@ internal fun EpubPages(
             fromItem = { index, fraction -> book.positions.fromFlat(index, fraction) },
         )
 
-        TextList(listState, pager, margin, maxHeight, colors) {
+        TextList(listState, pager, margin, maxHeight, colors, onMenuTap) {
             items(count = blocks.size, key = { it }) { index ->
                 Column {
                     if (index > 0 && index in chapterStarts) Box(Modifier.height(48.dp))
@@ -236,7 +238,8 @@ internal fun EpubPages(
 /**
  * The flowing-text list: scrolls freely, or with a [pager] moves a screen at a time. Paged, the
  * vertical margin sits outside the list so each screen's first line starts below it, and there's
- * a screen of space after the end so the last screen can start on a whole line too.
+ * a screen of space after the end so the last screen can start on a whole line too. A tap (in
+ * the middle of the screen, when paged) shows or hides the reading controls via [onMenuTap].
  */
 @Composable
 private fun TextList(
@@ -245,10 +248,12 @@ private fun TextList(
     margin: Dp,
     maxHeight: Dp,
     colors: ReaderColors,
+    onMenuTap: () -> Unit,
     content: LazyListScope.() -> Unit,
 ) {
+    val toolbar = LocalTextToolbar.current
     if (pager == null) {
-        SelectionContainer {
+        SelectionContainer(Modifier.readerTaps(toolbar, onMenuTap)) {
             LazyColumn(
                 state = listState,
                 contentPadding = PaddingValues(horizontal = margin, vertical = 16.dp),
@@ -258,9 +263,8 @@ private fun TextList(
         return
     }
     val scope = rememberCoroutineScope()
-    val toolbar = LocalTextToolbar.current
     PagerScreen(pager) {
-        SelectionContainer(Modifier.padding(vertical = 16.dp).pageTurns(pager, scope, toolbar)) {
+        SelectionContainer(Modifier.padding(vertical = 16.dp).pageTurns(pager, scope, toolbar, onMenuTap)) {
             LazyColumn(
                 state = listState,
                 userScrollEnabled = false,
