@@ -2,7 +2,6 @@ package io.github.satyanvm.reader
 
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
-import com.sun.net.httpserver.HttpServer
 import io.github.satyanvm.reader.account.AccountApi
 import io.github.satyanvm.reader.account.AccountException
 import io.github.satyanvm.reader.account.SyncAccount
@@ -20,7 +19,10 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
-import java.net.InetSocketAddress
+import okhttp3.mockwebserver.Dispatcher
+import okhttp3.mockwebserver.MockResponse
+import okhttp3.mockwebserver.MockWebServer
+import okhttp3.mockwebserver.RecordedRequest
 
 /**
  * Sign-in against a local HTTP server that speaks the sync server's account API
@@ -194,25 +196,27 @@ private class FakeAccountServer {
     private var nextCode = 123456
     private var nextToken = 1
 
-    private val http: HttpServer = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0).apply {
-        createContext("/") { ex ->
-            val body = ex.requestBody.bufferedReader().readText()
-            val json = if (body.isBlank()) JSONObject() else JSONObject(body)
-            val bearer = ex.requestHeaders.getFirst("Authorization")?.removePrefix("Bearer ")
-            val (status, out) = synchronized(this@FakeAccountServer) {
-                route(ex.requestMethod, ex.requestURI.path, json, bearer)
+    private val http = MockWebServer().apply {
+        dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                val body = request.body.readUtf8()
+                val json = if (body.isBlank()) JSONObject() else JSONObject(body)
+                val bearer = request.getHeader("Authorization")?.removePrefix("Bearer ")
+                val (status, out) = synchronized(this@FakeAccountServer) {
+                    route(request.method ?: "GET", request.requestUrl?.encodedPath ?: "/", json, bearer)
+                }
+                return MockResponse()
+                    .setResponseCode(status)
+                    .setHeader("Content-Type", "application/json")
+                    .setBody(out.toString())
             }
-            val bytes = out.toString().toByteArray()
-            ex.responseHeaders.add("Content-Type", "application/json")
-            ex.sendResponseHeaders(status, bytes.size.toLong())
-            ex.responseBody.use { it.write(bytes) }
         }
         start()
     }
 
-    val url = "http://127.0.0.1:${http.address.port}"
+    val url = http.url("/").toString().trimEnd('/')
 
-    fun stop() = http.stop(0)
+    fun stop() = http.shutdown()
 
     fun addAccount(email: String, password: String, verified: Boolean = true) {
         passwords[email] = password
