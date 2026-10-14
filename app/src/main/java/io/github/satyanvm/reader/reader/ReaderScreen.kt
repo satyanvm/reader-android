@@ -60,6 +60,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.satyanvm.reader.text.EpubBook
+import io.github.satyanvm.reader.text.TextFlow
 import io.github.satyanvm.reader.text.TextTheme
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
@@ -75,6 +76,8 @@ fun ReaderScreen(vm: ReaderViewModel, onBack: () -> Unit) {
     val state by controller.state.collectAsStateWithLifecycle()
     val text by vm.text.collectAsStateWithLifecycle()
     val theme by vm.theme.collectAsStateWithLifecycle()
+    val flow by vm.flow.collectAsStateWithLifecycle()
+    val paged = flow == TextFlow.PAGED
     val snackbar = remember { SnackbarHostState() }
     val textMode = state.mode == ReadingMode.TEXT
     val colors = if (textMode) theme.colors() else TextTheme.LIGHT.colors()
@@ -107,9 +110,11 @@ fun ReaderScreen(vm: ReaderViewModel, onBack: () -> Unit) {
                         TextSettingsMenu(
                             scale = state.textScale,
                             theme = theme,
+                            flow = flow,
                             color = colors.text,
                             onScale = vm::setTextScale,
                             onTheme = vm::setTheme,
+                            onFlow = vm::setFlow,
                         )
                     } else {
                         TextButton(
@@ -149,9 +154,9 @@ fun ReaderScreen(vm: ReaderViewModel, onBack: () -> Unit) {
                 state.phase == Phase.Loading -> CircularProgressIndicator()
                 state.phase is Phase.Failed -> Text((state.phase as Phase.Failed).message)
                 doc == null -> Unit
-                doc is EpubBook -> EpubPages(doc, state, controller, colors)
+                doc is EpubBook -> EpubPages(doc, state, controller, colors, paged)
                 doc !is PagedDocument -> Unit
-                textMode && text != null -> TextPages(text!!, doc, state, controller, colors)
+                textMode && text != null -> TextPages(text!!, doc, state, controller, colors, paged)
                 else -> PdfPages(doc, state, controller)
             }
         }
@@ -162,9 +167,11 @@ fun ReaderScreen(vm: ReaderViewModel, onBack: () -> Unit) {
 private fun TextSettingsMenu(
     scale: Float,
     theme: TextTheme,
+    flow: TextFlow,
     color: Color,
     onScale: (Float) -> Unit,
     onTheme: (TextTheme) -> Unit,
+    onFlow: (TextFlow) -> Unit,
 ) {
     var open by remember { mutableStateOf(false) }
     TextButton(onClick = { open = true }) { Text("Aa", color = color) }
@@ -186,6 +193,14 @@ private fun TextSettingsMenu(
                 text = { Text(t.label) },
                 leadingIcon = { if (t == theme) Icon(Icons.Filled.Check, contentDescription = null) },
                 onClick = { onTheme(t) },
+            )
+        }
+        HorizontalDivider()
+        for (f in TextFlow.entries) {
+            DropdownMenuItem(
+                text = { Text(f.label) },
+                leadingIcon = { if (f == flow) Icon(Icons.Filled.Check, contentDescription = null) },
+                onClick = { onFlow(f) },
             )
         }
     }
