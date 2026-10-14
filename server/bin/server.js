@@ -4,6 +4,7 @@
 //   READER_DB            SQLite file (default ./data/reader-sync.sqlite)
 //   PORT, HOST           default 8787, 127.0.0.1 (0.0.0.0 to accept other machines; put TLS in front)
 //   PASSWORD_PEPPER      secret mixed into password hashes (keep it, or passwords stop working)
+//   EMAIL_CODES          1: email + password accounts need an emailed code (otherwise no code)
 //   RESEND_API_KEY, MAIL_FROM   send account emails with Resend (otherwise they're only logged)
 //   READER_DEV_MAIL_DIR  development: also write each email to this folder
 //   GOOGLE_CLIENT_IDS, APPLE_AUDIENCES   comma-separated, turn on Google / Apple sign-in
@@ -26,6 +27,7 @@ if (mailDir) mkdirSync(mailDir, { recursive: true });
 const devSink = mailDir ? async (mail) => writeFileSync(join(mailDir, `${Date.now()}-${mail.to}.json`), JSON.stringify(mail)) : undefined;
 const handler = createHandler({ store, env: process.env, log, devSink });
 
+if (process.env.EMAIL_CODES !== '1') log('email codes: off, email + password sign-in needs no code (EMAIL_CODES=1 turns them on)');
 if (!process.env.RESEND_API_KEY) log('email: development mode, codes are only logged (set RESEND_API_KEY to send them)');
 if (!process.env.PASSWORD_PEPPER) log('warning: PASSWORD_PEPPER is not set; fine for local testing only');
 const on = (v) => (v ? 'on' : 'off');

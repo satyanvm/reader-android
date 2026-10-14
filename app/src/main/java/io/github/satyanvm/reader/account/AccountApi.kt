@@ -30,16 +30,21 @@ class AccountApi(
     private val baseUrl: String,
     private val timeoutMs: Int = 15_000,
 ) {
-    data class Providers(val apple: Boolean, val google: Boolean)
+    /** [emailCodes]: new accounts confirm their email with a code, and passwords can be reset. */
+    data class Providers(val apple: Boolean, val google: Boolean, val emailCodes: Boolean = true)
 
     suspend fun providers(): Providers {
         val o = call("GET", "v1/auth/providers")
-        return Providers(o.optBoolean("apple"), o.optBoolean("google"))
+        return Providers(o.optBoolean("apple"), o.optBoolean("google"), o.optBoolean("emailCodes", true))
     }
 
-    /** Creates the account (or refreshes an unconfirmed one) and emails a code. */
-    suspend fun signUp(email: String, password: String) {
-        call("POST", "v1/auth/signup", mapOf("email" to email, "password" to password))
+    /**
+     * Creates the account (or refreshes an unconfirmed one) and emails a code; returns null then.
+     * A server with email codes off signs the new account in at once and returns its session.
+     */
+    suspend fun signUp(email: String, password: String): AccountSessionInfo? {
+        val o = call("POST", "v1/auth/signup", mapOf("email" to email, "password" to password))
+        return if (o.has("token")) session(o) else null
     }
 
     suspend fun verify(email: String, code: String): AccountSessionInfo =

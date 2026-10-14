@@ -15,6 +15,9 @@ database_id = "8398bf6b-bcf3-4403-820c-db10d88a9483"
 GOOGLE_CLIENT_IDS = ""
 APPLE_AUDIENCES = ""
 MAIL_FROM = "Reader <onboarding@resend.dev>"
+# "1": new email + password accounts confirm the address with an emailed code, and
+# "Forgot password?" works. Anything else: no code, sign-up signs in at once (until mail is set up).
+EMAIL_CODES = ""
 
 # Secrets (not in this file): `npx wrangler secret put <NAME>`
 #   PASSWORD_PEPPER  required: random secret mixed into password hashes; never change it

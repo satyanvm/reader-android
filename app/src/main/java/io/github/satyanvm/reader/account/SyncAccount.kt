@@ -57,8 +57,8 @@ class SyncAccount(
 
     suspend fun createAccount(email: String, password: String) {
         val email = clean(email)
-        api.signUp(email, password)
-        _stage.value = Stage.AwaitingCode(email, CodePurpose.ConfirmEmail)
+        val session = api.signUp(email, password)
+        if (session != null) signedIn(session) else _stage.value = Stage.AwaitingCode(email, CodePurpose.ConfirmEmail)
     }
 
     suspend fun signIn(email: String, password: String) {

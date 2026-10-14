@@ -137,6 +137,7 @@ fun AccountScreen(
                 SyncAccount.Stage.SignedOut -> SignedOutContent(
                     busy = busy,
                     showGoogle = providers.google && google.isConfigured,
+                    emailCodes = providers.emailCodes,
                     onSignIn = { email, password ->
                         account.dismissNotice()
                         submit { account.signIn(email, password) }
@@ -177,6 +178,7 @@ private enum class SignedOutMode { SignIn, Create, Forgot }
 private fun SignedOutContent(
     busy: Boolean,
     showGoogle: Boolean,
+    emailCodes: Boolean,
     onSignIn: (String, String) -> Unit,
     onCreate: (String, String) -> Unit,
     onForgot: (String) -> Unit,
@@ -190,7 +192,9 @@ private fun SignedOutContent(
     Text(
         when (mode) {
             SignedOutMode.SignIn -> "Sign in to sync your reading positions with your other devices."
-            SignedOutMode.Create -> "Create an account. We'll email you a code to confirm the address."
+            SignedOutMode.Create ->
+                if (emailCodes) "Create an account. We'll email you a code to confirm the address."
+                else "Create an account to sync your reading positions with your other devices."
             SignedOutMode.Forgot -> "Enter your email and we'll send a code to set a new password."
         },
         style = MaterialTheme.typography.bodyMedium,
@@ -243,7 +247,8 @@ private fun SignedOutContent(
     }
     when (mode) {
         SignedOutMode.SignIn -> {
-            TextButton(onClick = { mode = SignedOutMode.Forgot }) { Text("Forgot password?") }
+            // Resetting a password needs an emailed code.
+            if (emailCodes) TextButton(onClick = { mode = SignedOutMode.Forgot }) { Text("Forgot password?") }
             TextButton(onClick = { mode = SignedOutMode.Create }) { Text("New here? Create an account") }
         }
         else -> TextButton(onClick = { mode = SignedOutMode.SignIn }) { Text("Back to sign in") }

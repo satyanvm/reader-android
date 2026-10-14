@@ -48,13 +48,14 @@ It speaks plain HTTP. On anything but localhost, put it behind a TLS reverse pro
 
 People create their own account in the app, and every device signed in to it syncs:
 
-- **Email and password.** Creating an account emails a 6-digit code; the account works only once the code is entered (so the address is proven to be theirs). Signing in to an unconfirmed account sends a new code. "Forgot password?" emails a code that sets a new password and signs out other devices.
+- **Email and password.** With `EMAIL_CODES` off (the default for now, until mail sending is set up), creating an account signs in at once with no code, an email that already has an account can't be signed up again, and "Forgot password?" is hidden in the apps. With `EMAIL_CODES = "1"`: creating an account emails a 6-digit code; the account works only once the code is entered (so the address is proven to be theirs). Signing in to an unconfirmed account sends a new code. "Forgot password?" emails a code that sets a new password and signs out other devices.
 - **Sign in with Apple / Google.** The app sends the provider's ID token; the server checks its signature against Apple's or Google's published keys, the issuer, the audience (our app) and expiry. The provider's verified email joins the account with that email, so a person who signed up with a password and later uses Google lands in the same library. An unconfirmed password someone else set on that address is discarded.
 
 Passwords are hashed (see above); codes expire after 10 minutes, are single-use, and lock after 5 wrong tries; code requests and failed sign-ins are rate limited. Each sign-in gets its own session token (only its SHA-256 is stored); signing out ends that device's session.
 
 | Variable | |
 |---|---|
+| `EMAIL_CODES` | `1` makes new email + password accounts confirm their address with an emailed code and turns on password reset. Anything else: no codes. Turn it on once `RESEND_API_KEY` sends mail |
 | `RESEND_API_KEY`, `MAIL_FROM` | Send the code emails with [Resend](https://resend.com). Without a key the server is in development mode: emails are only printed to its log |
 | `READER_DEV_MAIL_DIR` | Development: also write each email to this folder as JSON |
 | `GOOGLE_CLIENT_IDS` | Comma-separated Google OAuth client ids allowed to sign in (the Mac app's iOS/macOS client, Android's, ...). Empty turns Google off |
@@ -73,14 +74,14 @@ GET /healthz                             200
 Every `/v1/reading-positions` request needs `Authorization: Bearer <token>` (otherwise 401). Positions are per account.
 
 ```
-POST /v1/auth/signup           { email, password }        202, code emailed
+POST /v1/auth/signup           { email, password }        202, code emailed (EMAIL_CODES off: session)
 POST /v1/auth/verify           { email, code }            session
 POST /v1/auth/resend           { email }
 POST /v1/auth/signin           { email, password }        session | 403 verification_required
 POST /v1/auth/password/forgot  { email }                  code emailed
 POST /v1/auth/password/reset   { email, code, password }  session
 POST /v1/auth/apple | google   { idToken }                session
-GET  /v1/auth/providers        { apple, google }
+GET  /v1/auth/providers        { apple, google, emailCodes }
 GET  /v1/me                    { email }
 POST /v1/auth/signout          ends this session
 ```

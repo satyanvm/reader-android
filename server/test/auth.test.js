@@ -161,7 +161,7 @@ describe('email and password', () => {
 
 describe('Sign in with Apple and Google', () => {
   test('the providers the app should offer', async () => {
-    assert.deepEqual((await get('/v1/auth/providers')).body, { apple: true, google: true });
+    assert.deepEqual((await get('/v1/auth/providers')).body, { apple: true, google: true, emailCodes: true });
   });
 
   test('Google creates a verified account; signing in again returns the same account', async () => {
