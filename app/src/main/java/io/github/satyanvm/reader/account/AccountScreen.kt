@@ -148,7 +148,7 @@ fun AccountScreen(
                     onForgot = { email -> submit { account.forgotPassword(email) } },
                     onGoogle = {
                         account.dismissNotice()
-                        submit { account.signIn("google", google.idToken(context)) }
+                        submit { account.signInWithProvider("google", google.idToken(context)) }
                     },
                     onInvalid = { error = it },
                 )

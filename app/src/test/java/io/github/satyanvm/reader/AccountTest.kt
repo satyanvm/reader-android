@@ -113,7 +113,7 @@ class AccountTest {
 
     @Test
     fun `google token exchanges for a session`() = runBlocking<Unit> {
-        account.signIn("google", "google-id-token-for:g@example.com")
+        account.signInWithProvider("google", "google-id-token-for:g@example.com")
         assertEquals(SyncAccount.Stage.SignedIn("g@example.com"), account.stage.value)
         assertEquals(1, signIns)
     }

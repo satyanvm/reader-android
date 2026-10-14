@@ -64,7 +64,7 @@ class AccountApi(
         session(call("POST", "v1/auth/password/reset", mapOf("email" to email, "code" to code, "password" to password)))
 
     /** Exchanges a provider's ID token ("google" or "apple") for a session. */
-    suspend fun signIn(provider: String, idToken: String): AccountSessionInfo =
+    suspend fun signInWithProvider(provider: String, idToken: String): AccountSessionInfo =
         session(call("POST", "v1/auth/$provider", mapOf("idToken" to idToken)))
 
     suspend fun signOut(token: String) {

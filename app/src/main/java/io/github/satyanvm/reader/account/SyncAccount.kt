@@ -104,8 +104,8 @@ class SyncAccount(
 
     // Google (and Apple, which the server also accepts)
 
-    suspend fun signIn(provider: String, idToken: String) {
-        signedIn(api.signIn(provider, idToken))
+    suspend fun signInWithProvider(provider: String, idToken: String) {
+        signedIn(api.signInWithProvider(provider, idToken))
     }
 
     // Session
