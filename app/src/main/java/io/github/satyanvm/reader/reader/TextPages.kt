@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.text.selection.SelectionContainer
@@ -24,6 +25,7 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
@@ -32,6 +34,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalTextToolbar
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
@@ -52,6 +55,7 @@ import io.github.satyanvm.reader.text.Block
 import io.github.satyanvm.reader.text.EpubBook
 import io.github.satyanvm.reader.text.PageText
 import io.github.satyanvm.reader.text.TextDocument
+import io.github.satyanvm.reader.text.TextFlow
 import io.github.satyanvm.reader.text.TextTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -70,6 +74,12 @@ val TextTheme.label: String
         TextTheme.LIGHT -> "Light"
         TextTheme.SEPIA -> "Sepia"
         TextTheme.DARK -> "Dark"
+    }
+
+val TextFlow.label: String
+    get() = when (this) {
+        TextFlow.PAGED -> "Page by page"
+        TextFlow.CONTINUOUS -> "Continuous scroll"
     }
 
 /** Comfortable line length on tablets; phones use the full width minus margins. */
@@ -99,16 +109,19 @@ internal fun TextPages(
     state: ReaderUiState,
     controller: ReaderController,
     colors: ReaderColors,
+    paged: Boolean,
 ) {
     val density = LocalDensity.current
     BoxWithConstraints(Modifier.fillMaxSize().background(colors.background)) {
-        val layoutKey = state.layoutKey(constraints.maxWidth)
+        val layoutKey = state.layoutKey(constraints.maxWidth).copy(paged = paged)
         val margin = margin(maxWidth)
         val columnWidthPx = with(density) { (maxWidth - margin * 2).roundToPx() }
         val listState = rememberLazyListState()
+        val pager = remember(listState) { Pager(listState) }.takeIf { paged }
         val style = remember(state.textScale, colors) { bodyStyle(state.textScale, colors) }
 
         TrackPosition(
+            pager = pager,
             listState = listState,
             state = state,
             controller = controller,
@@ -118,14 +131,9 @@ internal fun TextPages(
             fromItem = { index, fraction -> if (index in text.loaded) index to fraction else index to 0f },
         )
 
-        SelectionContainer {
-            LazyColumn(
-                state = listState,
-                contentPadding = PaddingValues(horizontal = margin, vertical = 16.dp),
-            ) {
-                items(count = text.pageCount, key = { it }) { index ->
-                    TextPage(text, pdf, index, columnWidthPx, style, colors)
-                }
+        TextList(listState, pager, margin, maxHeight, colors) {
+            items(count = text.pageCount, key = { it }) { index ->
+                TextPage(text, pdf, index, columnWidthPx, style, colors, pager)
             }
         }
 
@@ -155,24 +163,28 @@ private fun TextPage(
     widthPx: Int,
     style: TextStyle,
     colors: ReaderColors,
+    pager: Pager?,
 ) {
     val page: PageText? = text.loaded[index]
     LaunchedEffect(index, page == null) {
         if (page == null) runCatching { text.page(index) }
     }
     when {
-        page == null -> Box(Modifier.fillMaxWidth().height(320.dp), contentAlignment = Alignment.Center) {
+        page == null -> Box(
+            Modifier.fillMaxWidth().height(320.dp).pagerEntry(rememberPagerEntry(pager, index)),
+            contentAlignment = Alignment.Center,
+        ) {
             Text("…", color = colors.muted)
         }
         page.isEmpty -> {
             val size = pdf.pageSizes[index]
             val heightPx = maxOf(1, (widthPx.toLong() * size.height / maxOf(1, size.width)).toInt())
-            Box(Modifier.padding(vertical = 12.dp)) {
+            Box(Modifier.padding(vertical = 12.dp).pagerEntry(rememberPagerEntry(pager, index))) {
                 Page(pdf, index, widthPx, heightPx, gapPx = 0)
             }
         }
         else -> Column {
-            for (block in page.blocks) BlockView(block, style, colors, image = null)
+            for (block in page.blocks) BlockView(block, style, colors, image = null, rememberPagerEntry(pager, index))
         }
     }
 }
@@ -184,18 +196,21 @@ internal fun EpubPages(
     state: ReaderUiState,
     controller: ReaderController,
     colors: ReaderColors,
+    paged: Boolean,
 ) {
     val density = LocalDensity.current
     BoxWithConstraints(Modifier.fillMaxSize().background(colors.background)) {
-        val layoutKey = state.layoutKey(constraints.maxWidth)
+        val layoutKey = state.layoutKey(constraints.maxWidth).copy(paged = paged)
         val margin = margin(maxWidth)
         val columnWidthPx = with(density) { (maxWidth - margin * 2).roundToPx() }
         val listState = rememberLazyListState()
+        val pager = remember(listState) { Pager(listState) }.takeIf { paged }
         val style = remember(state.textScale, colors) { bodyStyle(state.textScale, colors) }
         val blocks = remember(book) { book.chapters.flatten() }
         val chapterStarts = remember(book) { book.chapters.indices.map { book.positions.chapterStart(it) }.toSet() }
 
         TrackPosition(
+            pager = pager,
             listState = listState,
             state = state,
             controller = controller,
@@ -205,20 +220,54 @@ internal fun EpubPages(
             fromItem = { index, fraction -> book.positions.fromFlat(index, fraction) },
         )
 
+        TextList(listState, pager, margin, maxHeight, colors) {
+            items(count = blocks.size, key = { it }) { index ->
+                Column {
+                    if (index > 0 && index in chapterStarts) Box(Modifier.height(48.dp))
+                    BlockView(blocks[index], style, colors, image = { path ->
+                        EpubImage(book, path, columnWidthPx)
+                    }, rememberPagerEntry(pager, index))
+                }
+            }
+        }
+    }
+}
+
+/**
+ * The flowing-text list: scrolls freely, or with a [pager] moves a screen at a time. Paged, the
+ * vertical margin sits outside the list so each screen's first line starts below it, and there's
+ * a screen of space after the end so the last screen can start on a whole line too.
+ */
+@Composable
+private fun TextList(
+    listState: LazyListState,
+    pager: Pager?,
+    margin: Dp,
+    maxHeight: Dp,
+    colors: ReaderColors,
+    content: LazyListScope.() -> Unit,
+) {
+    if (pager == null) {
         SelectionContainer {
             LazyColumn(
                 state = listState,
                 contentPadding = PaddingValues(horizontal = margin, vertical = 16.dp),
-            ) {
-                items(count = blocks.size, key = { it }) { index ->
-                    Column {
-                        if (index > 0 && index in chapterStarts) Box(Modifier.height(48.dp))
-                        BlockView(blocks[index], style, colors, image = { path ->
-                            EpubImage(book, path, columnWidthPx)
-                        })
-                    }
-                }
-            }
+                content = content,
+            )
+        }
+        return
+    }
+    val scope = rememberCoroutineScope()
+    val toolbar = LocalTextToolbar.current
+    PagerScreen(pager) {
+        SelectionContainer(Modifier.padding(vertical = 16.dp).pageTurns(pager, scope, toolbar)) {
+            LazyColumn(
+                state = listState,
+                userScrollEnabled = false,
+                contentPadding = PaddingValues(start = margin, end = margin, bottom = maxHeight),
+                modifier = Modifier.pagerViewport(pager, colors.background),
+                content = content,
+            )
         }
     }
 }
@@ -230,6 +279,7 @@ internal fun EpubPages(
  */
 @Composable
 private fun TrackPosition(
+    pager: Pager?,
     listState: LazyListState,
     state: ReaderUiState,
     controller: ReaderController,
@@ -252,6 +302,7 @@ private fun TrackPosition(
         withFrameNanos { }
         listState.scrollToItem(item, (within * listState.itemHeight(item)).roundToInt())
         withFrameNanos { }
+        pager?.alignTop()
         val first = listState.firstVisibleItemIndex
         val (actualPage, actualFraction) = fromItem(first, listState.fractionIn(first))
         controller.onRestoreApplied(
@@ -279,6 +330,8 @@ private fun BlockView(
     style: TextStyle,
     colors: ReaderColors,
     image: (@Composable (String) -> Unit)?,
+    /** Set when reading a screen at a time, to keep lines and images whole on one screen. */
+    entry: Pager.Entry?,
 ) {
     when (block.kind) {
         Block.Kind.HEADING -> Text(
@@ -289,17 +342,20 @@ private fun BlockView(
                 textAlign = TextAlign.Center,
                 lineHeight = 1.35.em,
             ),
-            modifier = Modifier.fillMaxWidth().padding(top = 28.dp, bottom = 14.dp),
+            onTextLayout = { entry?.text = it },
+            modifier = Modifier.fillMaxWidth().padding(top = 28.dp, bottom = 14.dp).pagerEntry(entry),
         )
         Block.Kind.PARAGRAPH -> Text(
             text = block.annotated(),
             style = style.copy(
                 textIndent = if (block.continuation) null else TextIndent(firstLine = 1.6.em),
             ),
+            onTextLayout = { entry?.text = it },
+            modifier = Modifier.pagerEntry(entry),
         )
         Block.Kind.IMAGE -> block.image?.let { path ->
             Box(Modifier.fillMaxWidth().padding(vertical = 12.dp), contentAlignment = Alignment.Center) {
-                image?.invoke(path)
+                Box(Modifier.pagerEntry(entry)) { image?.invoke(path) }
             }
         }
     }

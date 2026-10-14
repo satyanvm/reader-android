@@ -6,6 +6,7 @@ import io.github.satyanvm.reader.AppGraph
 import io.github.satyanvm.reader.text.EpubBook
 import io.github.satyanvm.reader.text.MlKitOcr
 import io.github.satyanvm.reader.text.TextDocument
+import io.github.satyanvm.reader.text.TextFlow
 import io.github.satyanvm.reader.text.TextTheme
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -19,6 +20,8 @@ class ReaderViewModel(private val documentId: String, private val graph: AppGrap
     val text: StateFlow<TextDocument?> = _text.asStateFlow()
 
     val theme: StateFlow<TextTheme> = graph.readingPrefs.theme
+
+    val flow: StateFlow<TextFlow> = graph.readingPrefs.flow
 
     private var pdfFile: File? = null
 
@@ -65,6 +68,8 @@ class ReaderViewModel(private val documentId: String, private val graph: AppGrap
     }
 
     fun setTheme(theme: TextTheme) = graph.readingPrefs.setTheme(theme)
+
+    fun setFlow(flow: TextFlow) = graph.readingPrefs.setFlow(flow)
 
     private fun ensureText(file: File, pdf: PagedDocument, from: Int) {
         if (_text.value != null) return
