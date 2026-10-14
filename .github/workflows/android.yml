@@ -20,6 +20,10 @@ jobs:
       - name: Build debug APK
         run: ./gradlew :app:assembleDebug
       - uses: actions/upload-artifact@v4
+        with:
+          name: reader-debug-apk
+          path: app/build/outputs/apk/debug/*.apk
+      - uses: actions/upload-artifact@v4
         if: failure()
         with:
           name: test-reports
