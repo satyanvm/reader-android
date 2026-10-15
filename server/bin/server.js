@@ -11,6 +11,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { nodeSqlite } from '../src/db.js';
+import { dbBlobs } from '../src/blobs.js';
 import { serve } from '../src/node-http.js';
 import { Store } from '../src/store.js';
 import { createHandler } from '../src/worker.js';
@@ -25,7 +26,8 @@ const log = (line) => console.log(new Date().toISOString(), line);
 const mailDir = process.env.READER_DEV_MAIL_DIR;
 if (mailDir) mkdirSync(mailDir, { recursive: true });
 const devSink = mailDir ? async (mail) => writeFileSync(join(mailDir, `${Date.now()}-${mail.to}.json`), JSON.stringify(mail)) : undefined;
-const handler = createHandler({ store, env: process.env, log, devSink });
+const blobs = dbBlobs(db);
+const handler = createHandler({ store, blobs, env: process.env, log, devSink });
 
 if (process.env.EMAIL_CODES !== '1') log('email codes: off, email + password sign-in needs no code (EMAIL_CODES=1 turns them on)');
 if (!process.env.RESEND_API_KEY) log('email: development mode, codes are only logged (set RESEND_API_KEY to send them)');

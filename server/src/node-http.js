@@ -17,7 +17,8 @@ export function serve(handler, { log = () => {} } = {}) {
       });
       const response = await handler(request);
       const out = Buffer.from(await response.arrayBuffer());
-      res.writeHead(response.status, { ...Object.fromEntries(response.headers), 'Content-Length': out.length });
+      const outHeaders = Object.fromEntries([...response.headers].filter(([k]) => k !== 'content-length'));
+      res.writeHead(response.status, { ...outHeaders, 'Content-Length': out.length });
       res.end(out);
       log(`${req.method} ${req.url.split('?')[0]} ${response.status} ${Date.now() - started}ms`);
     } catch (e) {
