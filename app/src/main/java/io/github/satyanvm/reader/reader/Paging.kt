@@ -114,11 +114,11 @@ internal class PageTurns {
     }
 
     private companion object {
-        /** A whole turn after a tap. Unhurried, like turning a real page. */
-        const val TURN_MS = 620
-        const val MIN_SETTLE_MS = 200
-        /** Lifts off gently, sweeps across, settles softly. */
-        val TurnEasing = CubicBezierEasing(0.35f, 0f, 0.25f, 1f)
+        /** A whole turn after a tap: quick, so reading is never kept waiting. */
+        const val TURN_MS = 280
+        const val MIN_SETTLE_MS = 90
+        /** Moves from the first frame and settles softly; no slow lift-off. */
+        val TurnEasing = CubicBezierEasing(0.2f, 0f, 0f, 1f)
     }
 }
 
