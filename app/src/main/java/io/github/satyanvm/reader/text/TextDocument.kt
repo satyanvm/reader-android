@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import androidx.compose.runtime.mutableStateMapOf
 import com.tom_roush.pdfbox.io.MemoryUsageSetting
 import com.tom_roush.pdfbox.pdmodel.PDDocument
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -78,7 +79,15 @@ class TextDocument(
         prefetch = scope.launch {
             for (i in order) {
                 if (!isActive) break
-                if (i !in loaded) runCatching { page(i) }
+                if (i in loaded) continue
+                try {
+                    page(i)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    // Couldn't get text: show the page as its image rather than leave a hole.
+                    loaded[i] = PageText(emptyList())
+                }
             }
         }
     }

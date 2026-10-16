@@ -28,7 +28,8 @@ The mode is remembered per document on each device (`documents.readingMode`) and
 1. **In memory.** `ReaderController` tracks the viewport position.
 2. **Local, durable.** Room/SQLite in WAL mode with `synchronous=FULL`. Writes are debounced at 500 ms and forced at least every 3 s during continuous scrolling, so a reading session is never more than a few seconds from disk. Pause and close also flush, but nothing depends on that, because the OS can kill the app without warning.
 3. **Server.** WorkManager pushes unsynced rows with a network constraint and exponential backoff, plus a periodic job. It survives process death and reboots, so offline progress goes out once connectivity returns, even if the app isn't reopened.
-4. **Restore.** On open, the local row is used immediately. If there's none and the user is signed in, the reader waits up to 1.5 s for the server before starting at page one.
+4. **Library.** The same background job then fetches the account's library (`GET /v1/library`, the same routes the Mac app uses): books on this device that the account lacks are added and uploaded (`PUT /v1/library/{id}`, then `PUT /v1/library/{id}/file`), books in the account that this device lacks are downloaded (checked against their SHA-256 id), and each book's server position is pulled and merged through the usual compare. A book removed from the account on another device is neither re-added nor deleted here. It runs on app start, each time the app comes to the foreground, after importing a book, after signing in, and every 15 minutes. There's no manual "sync now".
+5. **Restore.** On open, the local row is used immediately. If there's none and the user is signed in, the reader waits up to 1.5 s for the server before starting at page one.
 
 ## Conflict policy: last writer wins
 

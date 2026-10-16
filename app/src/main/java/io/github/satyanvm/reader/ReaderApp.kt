@@ -11,6 +11,7 @@ import io.github.satyanvm.reader.data.RoomPositionStore
 import io.github.satyanvm.reader.data.db.AppDatabase
 import io.github.satyanvm.reader.model.HybridClock
 import io.github.satyanvm.reader.sync.HttpSyncApi
+import io.github.satyanvm.reader.sync.LibrarySync
 import io.github.satyanvm.reader.sync.SyncEngine
 import io.github.satyanvm.reader.sync.SyncScheduler
 import io.github.satyanvm.reader.telemetry.LocalRestoreTelemetry
@@ -66,10 +67,22 @@ class AppGraph(context: Context) {
     )
     val documents = DocumentRepository(context, database.documents())
 
+    private val syncApi = syncBaseUrl.takeIf { it.isNotBlank() }?.let { HttpSyncApi(it, account::token) }
+
     val syncEngine = SyncEngine(
         repository = positions,
-        api = syncBaseUrl.takeIf { it.isNotBlank() }?.let { HttpSyncApi(it, account::token) },
+        api = syncApi,
         session = account,
+        onUnauthorized = account::onUnauthorized,
+    )
+
+    /** Books and every position, both ways; runs with each background sync. */
+    val librarySync = LibrarySync(
+        api = syncApi,
+        positionsApi = syncApi,
+        session = account,
+        documents = documents,
+        positions = positions,
         onUnauthorized = account::onUnauthorized,
     )
 

@@ -51,7 +51,6 @@ import kotlinx.coroutines.launch
 fun AccountScreen(
     account: SyncAccount,
     google: GoogleSignIn,
-    onSyncNow: () -> Unit,
     onBack: () -> Unit,
 ) {
     val stage by account.stage.collectAsStateWithLifecycle()
@@ -112,10 +111,6 @@ fun AccountScreen(
                 is SyncAccount.Stage.SignedIn -> SignedInContent(
                     email = s.email,
                     busy = busy,
-                    onSyncNow = {
-                        onSyncNow()
-                        info = "Syncing your reading positions."
-                    },
                     onSignOut = { submit { account.signOut() } },
                 )
                 is SyncAccount.Stage.AwaitingCode -> CodeContent(
@@ -161,14 +156,13 @@ fun AccountScreen(
 }
 
 @Composable
-private fun SignedInContent(email: String, busy: Boolean, onSyncNow: () -> Unit, onSignOut: () -> Unit) {
+private fun SignedInContent(email: String, busy: Boolean, onSignOut: () -> Unit) {
     Text("Signed in as", style = MaterialTheme.typography.labelLarge)
     Text(email.ifEmpty { "your account" }, style = MaterialTheme.typography.titleMedium)
     Text(
-        "Your place in every book syncs with your other devices signed in to this account, including the Mac app.",
+        "Your books and your place in each one sync automatically with your other devices signed in to this account. Books you add here are uploaded, and books added elsewhere download to this device.",
         style = MaterialTheme.typography.bodyMedium,
     )
-    Button(onClick = onSyncNow, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text("Sync now") }
     OutlinedButton(onClick = onSignOut, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text("Sign out") }
 }
 
@@ -191,10 +185,10 @@ private fun SignedOutContent(
 
     Text(
         when (mode) {
-            SignedOutMode.SignIn -> "Sign in to sync your reading positions with your other devices."
+            SignedOutMode.SignIn -> "Sign in to sync your books and reading positions with your other devices."
             SignedOutMode.Create ->
                 if (emailCodes) "Create an account. We'll email you a code to confirm the address."
-                else "Create an account to sync your reading positions with your other devices."
+                else "Create an account to sync your books and reading positions with your other devices."
             SignedOutMode.Forgot -> "Enter your email and we'll send a code to set a new password."
         },
         style = MaterialTheme.typography.bodyMedium,

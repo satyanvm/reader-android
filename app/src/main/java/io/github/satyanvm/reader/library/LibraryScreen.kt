@@ -95,7 +95,7 @@ fun LibraryScreen(
 private fun SignInPrompt(onSignIn: () -> Unit) {
     ListItem(
         headlineContent = { Text("Sync your reading") },
-        supportingContent = { Text("Sign in to pick up where you left off on your other devices.") },
+        supportingContent = { Text("Sign in to get your books and pick up where you left off on your other devices.") },
         trailingContent = { Button(onClick = onSignIn) { Text("Sign in") } },
         modifier = Modifier.clickable(onClick = onSignIn).padding(horizontal = 4.dp),
     )

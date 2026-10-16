@@ -7,7 +7,7 @@ import kotlinx.coroutines.flow.asStateFlow
 
 enum class TextTheme { LIGHT, SEPIA, DARK }
 
-/** How flowing text moves: a screen at a time (like Play Books), or one continuous scroll. */
+/** How flowing text is read: as a book of numbered pages that turn (like Play Books), or one continuous scroll. */
 enum class TextFlow { PAGED, CONTINUOUS }
 
 /** Flowing-text appearance; applies to every book on this device. */

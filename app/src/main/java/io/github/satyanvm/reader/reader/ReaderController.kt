@@ -28,8 +28,10 @@ data class LayoutKey(
     val zoom: Float,
     val mode: ReadingMode = ReadingMode.PAGES,
     val textScale: Float = 1f,
-    /** Flowing text read a screen at a time rather than scrolled. */
+    /** Flowing text laid out as a book of pages rather than scrolled. */
     val paged: Boolean = false,
+    /** Book pages depend on the height too. */
+    val viewportHeightPx: Int = 0,
 )
 
 /** What opening a document produces. */

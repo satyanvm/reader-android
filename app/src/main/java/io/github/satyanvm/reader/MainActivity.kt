@@ -51,6 +51,8 @@ class MainActivity : ComponentActivity() {
                     scope.launch {
                         try {
                             val doc = graph.documents.import(uri)
+                            // A new book goes up to the account in the background.
+                            graph.syncScheduler.requestSync(delaySeconds = 0)
                             nav.navigate("reader/${doc.id}") { launchSingleTop = true }
                         } catch (e: UnsupportedFormatException) {
                             Toast.makeText(this@MainActivity, "Only PDF and EPUB books can be opened", Toast.LENGTH_LONG).show()
@@ -88,7 +90,6 @@ class MainActivity : ComponentActivity() {
                         AccountScreen(
                             account = graph.account,
                             google = graph.googleSignIn,
-                            onSyncNow = { graph.syncScheduler.requestSync(delaySeconds = 0) },
                             onBack = { nav.popBackStack() },
                         )
                     }
@@ -103,6 +104,12 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        // Each return to the app picks up books and reading from other devices.
+        (application as ReaderApp).graph.syncScheduler.requestSync(delaySeconds = 0)
     }
 
     override fun onNewIntent(intent: Intent) {

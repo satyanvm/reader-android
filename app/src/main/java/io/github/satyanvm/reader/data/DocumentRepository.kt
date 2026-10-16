@@ -16,7 +16,7 @@ import java.io.File
 import java.security.MessageDigest
 
 /**
- * Imports PDFs into app storage and keeps the library list.
+ * Imports PDFs and EPUBs into app storage and keeps the library list.
  *
  * Each PDF is copied into app-private storage and named by the SHA-256 of its bytes. The hash is
  * the document id everywhere, including sync: the same file opened on another device gets the
@@ -36,56 +36,98 @@ class DocumentRepository(
 
     suspend fun get(id: String): DocumentEntity? = dao.get(id)
 
+    suspend fun all(): List<DocumentEntity> = dao.all()
+
+    /** The stored file for [doc], if it's still there. */
+    fun fileOf(doc: DocumentEntity): File? = File(doc.localPath).takeIf { it.isFile }
+
     suspend fun touch(id: String) = dao.touch(id, now())
 
     suspend fun setReadingMode(id: String, mode: String) = dao.setReadingMode(id, mode)
 
     suspend fun import(uri: Uri): DocumentEntity = withContext(Dispatchers.IO) {
-        val tmp = File.createTempFile("import", ".pdf", dir)
+        val tmp = File.createTempFile("import", ".part", dir)
         try {
-            val digest = MessageDigest.getInstance("SHA-256")
             val input = context.contentResolver.openInputStream(uri)
                 ?: error("Can't open $uri")
             input.use { src ->
                 tmp.outputStream().use { dst ->
-                    val buf = ByteArray(DEFAULT_BUFFER_SIZE * 8)
-                    while (true) {
-                        val n = src.read(buf)
-                        if (n < 0) break
-                        digest.update(buf, 0, n)
-                        dst.write(buf, 0, n)
-                    }
+                    src.copyTo(dst, DEFAULT_BUFFER_SIZE * 8)
                     dst.fd.sync()
                 }
             }
-            val id = digest.digest().joinToString("") { "%02x".format(it) }
-            val format = when {
-                isPdf(tmp) -> "PDF"
-                EpubBook.isEpub(tmp) -> "EPUB"
-                else -> throw UnsupportedFormatException()
-            }
-            val target = File(dir, "$id.${format.lowercase()}")
-            if (target.exists()) tmp.delete() else check(tmp.renameTo(target)) { "rename failed" }
-
-            val existing = dao.get(id)
-            val entity = existing?.copy(lastOpenedAt = now()) ?: run {
-                val (pages, bookTitle) = if (format == "PDF") pageCount(target) to null
-                else EpubBook.open(target).use { it.pageCount to it.title }
-                DocumentEntity(
-                    id = id,
-                    title = bookTitle ?: displayName(uri)?.substringBeforeLast('.') ?: "Untitled",
-                    localPath = target.absolutePath,
-                    sizeBytes = target.length(),
-                    pageCount = pages,
-                    lastOpenedAt = now(),
-                    format = format,
-                )
-            }
-            dao.put(entity)
-            entity
+            val id = sha256(tmp)
+            register(id, tmp, titleFallback = displayName(uri)?.substringBeforeLast('.'), openedAt = now())
         } finally {
             if (tmp.exists()) tmp.delete()
         }
+    }
+
+    /**
+     * Adds a book downloaded from the sync server. [tmp] is the downloaded file; it must hash to
+     * [id], or it's discarded. The server's title is used unless the book names itself.
+     * Returns null if the file is corrupt or not a book.
+     */
+    suspend fun adoptDownload(id: String, title: String, addedAt: Long, tmp: File): DocumentEntity? =
+        withContext(Dispatchers.IO) {
+            try {
+                if (sha256(tmp) != id) null
+                else register(id, tmp, titleFallback = title, openedAt = addedAt, preferFallbackTitle = true)
+            } catch (e: UnsupportedFormatException) {
+                null
+            } finally {
+                if (tmp.exists()) tmp.delete()
+            }
+        }
+
+    /** A scratch file in the documents folder, so finishing a download is a rename. */
+    fun tempFile(): File = File.createTempFile("download", ".part", dir)
+
+    /** Moves [tmp] (already hashed to [id]) into place and records it, unless it's known. */
+    private suspend fun register(
+        id: String,
+        tmp: File,
+        titleFallback: String?,
+        openedAt: Long,
+        preferFallbackTitle: Boolean = false,
+    ): DocumentEntity {
+        val format = when {
+            isPdf(tmp) -> "PDF"
+            EpubBook.isEpub(tmp) -> "EPUB"
+            else -> throw UnsupportedFormatException()
+        }
+        val target = File(dir, "$id.${format.lowercase()}")
+        if (target.exists()) tmp.delete() else check(tmp.renameTo(target)) { "rename failed" }
+
+        val existing = dao.get(id)
+        val entity = existing?.copy(lastOpenedAt = maxOf(existing.lastOpenedAt, openedAt)) ?: run {
+            val (pages, bookTitle) = if (format == "PDF") pageCount(target) to null
+            else EpubBook.open(target).use { it.pageCount to it.title }
+            DocumentEntity(
+                id = id,
+                title = (if (preferFallbackTitle) titleFallback ?: bookTitle else bookTitle ?: titleFallback) ?: "Untitled",
+                localPath = target.absolutePath,
+                sizeBytes = target.length(),
+                pageCount = pages,
+                lastOpenedAt = openedAt,
+                format = format,
+            )
+        }
+        dao.put(entity)
+        return entity
+    }
+
+    private fun sha256(file: File): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        file.inputStream().use { input ->
+            val buf = ByteArray(DEFAULT_BUFFER_SIZE * 8)
+            while (true) {
+                val n = input.read(buf)
+                if (n < 0) break
+                digest.update(buf, 0, n)
+            }
+        }
+        return digest.digest().joinToString("") { "%02x".format(it) }
     }
 
     private fun isPdf(file: File): Boolean =

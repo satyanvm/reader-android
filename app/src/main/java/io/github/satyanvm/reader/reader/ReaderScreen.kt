@@ -110,6 +110,7 @@ fun ReaderScreen(vm: ReaderViewModel, onBack: () -> Unit) {
     val showControls = controlsShown || state.document == null
     ImmersiveEffect(immersive = !showControls)
     val toggleControls = { controlsShown = !controlsShown }
+    val book = remember { BookProgress() }
 
     Scaffold(
         containerColor = colors.background,
@@ -126,9 +127,13 @@ fun ReaderScreen(vm: ReaderViewModel, onBack: () -> Unit) {
                     state.phase == Phase.Loading -> CircularProgressIndicator()
                     state.phase is Phase.Failed -> Text((state.phase as Phase.Failed).message)
                     doc == null -> Unit
-                    doc is EpubBook -> EpubPages(doc, state, controller, colors, paged, toggleControls)
+                    doc is EpubBook ->
+                        if (paged) EpubBookPages(doc, state, controller, colors, book, showControls, toggleControls)
+                        else EpubPages(doc, state, controller, colors, toggleControls)
                     doc !is PagedDocument -> Unit
-                    textMode && text != null -> TextPages(text!!, doc, state, controller, colors, paged, toggleControls)
+                    textMode && text != null ->
+                        if (paged) PdfBookPages(text!!, doc, state, controller, colors, book, showControls, toggleControls)
+                        else TextPages(text!!, doc, state, controller, colors, toggleControls)
                     else -> PdfPages(doc, state, controller, toggleControls)
                 }
             }
@@ -195,13 +200,16 @@ fun ReaderScreen(vm: ReaderViewModel, onBack: () -> Unit) {
                     exit = slideOutVertically { it } + fadeOut(),
                     modifier = Modifier.align(Alignment.BottomCenter),
                 ) {
+                    // In book pages the scrubber moves through those pages; otherwise (or while a
+                    // PDF's pages are still being prepared) through the PDF's pages or the EPUB's chapters.
+                    val bookPages = paged && textMode && book.count > 0 && !book.partial
                     ProgressBar(
-                        pageIndex = state.pageIndex,
-                        pageCount = doc.pageCount,
-                        unit = if (doc is EpubBook) "Chapter " else "",
+                        pageIndex = if (bookPages) book.page else state.pageIndex,
+                        pageCount = if (bookPages) book.count else doc.pageCount,
+                        unit = if (bookPages) "Page " else if (doc is EpubBook) "Chapter " else "",
                         color = colors.text,
                         background = colors.background,
-                        onSeek = controller::goToPage,
+                        onSeek = if (bookPages) { page -> book.seek(page) } else controller::goToPage,
                     )
                 }
             }

@@ -15,7 +15,8 @@ import io.github.satyanvm.reader.ReaderApp
 import java.util.concurrent.TimeUnit
 
 /**
- * Background delivery of pending positions. WorkManager persists the request, waits for a
+ * Background sync: pending positions go up, then the library is reconciled (books uploaded and
+ * downloaded, every position pulled; see [LibrarySync]). WorkManager persists the request, waits for a
  * network, and survives process death and reboots, so progress saved offline reaches the server
  * once connectivity returns even if the app is never opened again.
  */
@@ -54,6 +55,8 @@ class SyncScheduler(private val context: Context) {
 class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result {
         val graph = (applicationContext as ReaderApp).graph
-        return if (graph.syncEngine.pushPending()) Result.success() else Result.retry()
+        val pushed = graph.syncEngine.pushPending()
+        val library = graph.librarySync.sync()
+        return if (pushed && library) Result.success() else Result.retry()
     }
 }

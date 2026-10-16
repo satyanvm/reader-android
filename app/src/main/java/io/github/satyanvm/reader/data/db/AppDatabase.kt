@@ -80,6 +80,9 @@ interface DocumentDao {
     @Query("SELECT * FROM documents WHERE id = :id")
     suspend fun get(id: String): DocumentEntity?
 
+    @Query("SELECT * FROM documents")
+    suspend fun all(): List<DocumentEntity>
+
     @Query("UPDATE documents SET lastOpenedAt = :at WHERE id = :id")
     suspend fun touch(id: String, at: Long)
 
