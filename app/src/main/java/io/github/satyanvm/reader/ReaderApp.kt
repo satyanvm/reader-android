@@ -63,9 +63,10 @@ class AppGraph(context: Context) {
         store = RoomPositionStore(database),
         clock = HybridClock(),
         deviceId = deviceId,
-        onPendingChange = { syncScheduler.requestSync() },
+        onPendingChange = { syncScheduler.pushPositions() },
     )
     val documents = DocumentRepository(context, database.documents())
+    val wishlist = database.wishlist()
 
     private val syncApi = syncBaseUrl.takeIf { it.isNotBlank() }?.let { HttpSyncApi(it, account::token) }
 

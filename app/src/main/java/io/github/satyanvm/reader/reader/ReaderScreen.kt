@@ -20,6 +20,8 @@ import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
@@ -63,6 +65,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalDensity
@@ -104,11 +107,12 @@ fun ReaderScreen(vm: ReaderViewModel, onBack: () -> Unit) {
 
     NoticeEffect(state.notice, snackbar, controller)
 
-    // Reading is full screen: the bars and the scrubber show on a tap and hide on the next one.
-    // They float over the page rather than pushing it around, so showing them never reflows text.
+    // The status bar stays, so the time and battery are always readable; the page sits below it.
+    // The app bar and the scrubber show on a tap and hide on the next one. They float over the
+    // page rather than pushing it around, so showing them never reflows text.
     var controlsShown by rememberSaveable { mutableStateOf(false) }
     val showControls = controlsShown || state.document == null
-    ImmersiveEffect(immersive = !showControls)
+    ImmersiveEffect(immersive = !showControls, darkPage = colors.background.luminance() < 0.5f)
     val toggleControls = { controlsShown = !controlsShown }
     val book = remember { BookProgress() }
 
@@ -119,7 +123,7 @@ fun ReaderScreen(vm: ReaderViewModel, onBack: () -> Unit) {
     ) { padding ->
         Box(Modifier.padding(padding).fillMaxSize()) {
             Box(
-                Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.displayCutout),
+                Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.displayCutout.union(WindowInsets.statusBars)),
                 contentAlignment = Alignment.Center,
             ) {
                 val doc = state.document
@@ -217,17 +221,27 @@ fun ReaderScreen(vm: ReaderViewModel, onBack: () -> Unit) {
     }
 }
 
-/** Hides the status and navigation bars while reading; a swipe from the edge brings them back briefly. */
+/**
+ * Hides the navigation bar while reading (a swipe from the edge brings it back briefly) and keeps
+ * the status bar's icons legible on the page colour: dark on light and sepia, light on dark.
+ */
 @Composable
-private fun ImmersiveEffect(immersive: Boolean) {
+private fun ImmersiveEffect(immersive: Boolean, darkPage: Boolean) {
     val view = LocalView.current
-    DisposableEffect(view, immersive) {
+    DisposableEffect(view, immersive, darkPage) {
         val window = view.context.findActivity()?.window
         val bars = window?.let { WindowCompat.getInsetsController(it, view) }
         bars?.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-        if (immersive) bars?.hide(WindowInsetsCompat.Type.systemBars())
-        else bars?.show(WindowInsetsCompat.Type.systemBars())
-        onDispose { bars?.show(WindowInsetsCompat.Type.systemBars()) }
+        bars?.isAppearanceLightStatusBars = !darkPage
+        bars?.isAppearanceLightNavigationBars = !darkPage
+        if (immersive) bars?.hide(WindowInsetsCompat.Type.navigationBars())
+        else bars?.show(WindowInsetsCompat.Type.navigationBars())
+        onDispose {
+            bars?.show(WindowInsetsCompat.Type.navigationBars())
+            // Back to the library, which is always light.
+            bars?.isAppearanceLightStatusBars = true
+            bars?.isAppearanceLightNavigationBars = true
+        }
     }
 }
 

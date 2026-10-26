@@ -37,7 +37,8 @@ class ReaderViewModel(private val documentId: String, private val graph: AppGrap
             } else {
                 pdfFile = file
                 val pdf = PdfDocument.open(file)
-                val mode = runCatching { ReadingMode.valueOf(doc.readingMode) }.getOrDefault(ReadingMode.PAGES)
+                // Flowing text, a page at a time, unless this book was switched to its original pages.
+                val mode = runCatching { ReadingMode.valueOf(doc.readingMode) }.getOrDefault(ReadingMode.TEXT)
                 if (mode == ReadingMode.TEXT) {
                     // Build around the saved page first, so the restore target is ready soonest.
                     ensureText(file, pdf, from = graph.positions.load(documentId)?.pageIndex ?: 0)

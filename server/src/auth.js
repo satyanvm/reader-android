@@ -1,4 +1,4 @@
-import { constantTimeEqual, hashPassword, randomCode, sha256Hex, verifyPassword } from './crypto.js';
+import { base64url, constantTimeEqual, hashPassword, randomCode, randomToken, sha256Hex, verifyPassword } from './crypto.js';
 import { HttpError } from './errors.js';
 import { TokenError, verifyIdToken } from './jwt.js';
 
@@ -9,6 +9,9 @@ const MAX_CODES_PER_HOUR = 6;
 const MAX_LOGIN_FAILURES = 10;
 const LOGIN_WINDOW_MS = 15 * 60 * 1000;
 const MIN_PASSWORD = 8;
+const APP_CODE_TTL_MS = 5 * 60 * 1000;
+/** A PKCE value: base64url, 43 to 128 characters (RFC 7636). */
+const PKCE = /^[A-Za-z0-9_-]{43,128}$/;
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 /**
@@ -155,6 +158,30 @@ export class Auth {
     // If two first sign-ins raced, use whichever link won.
     const accountId = await this.store.accountForIdentity(provider, claims.sub);
     return this.session(await this.store.accountById(accountId));
+  }
+
+  /**
+   * Hands a website sign-in to an app on the same computer, the way OAuth's PKCE does: the app
+   * makes a secret `verifier` and opens the site with `challenge` = base64url(SHA-256(verifier)).
+   * Once the person is signed in there, the site asks for a code bound to that challenge and
+   * passes it to the app in a link. The app exchanges code + verifier for its own session, so
+   * neither a session token nor anything usable on its own travels through the link.
+   */
+  async createAppCode(accountId, challenge) {
+    if (typeof challenge !== 'string' || !PKCE.test(challenge)) throw new HttpError(400, 'bad challenge', 'invalid_request');
+    const code = randomToken();
+    await this.store.putAppCode(await sha256Hex(code), accountId, challenge, this.now() + APP_CODE_TTL_MS, this.now());
+    return { code };
+  }
+
+  async exchangeAppCode(code, verifier) {
+    const invalid = new HttpError(400, 'That sign-in link has expired or was already used. Sign in again.', 'invalid_code');
+    if (typeof code !== 'string' || code.length > 128 || typeof verifier !== 'string' || !PKCE.test(verifier)) throw invalid;
+    const row = await this.store.takeAppCode(await sha256Hex(code));
+    if (!row || row.expires_at < this.now()) throw invalid;
+    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier));
+    if (!constantTimeEqual(base64url(digest), row.challenge)) throw invalid;
+    return this.session(await this.store.accountById(Number(row.account_id)));
   }
 
   async session(account) {

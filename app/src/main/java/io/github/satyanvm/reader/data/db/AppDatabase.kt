@@ -13,6 +13,7 @@ import androidx.room.Query
 import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.Upsert
+import androidx.room.migration.Migration
 import kotlinx.coroutines.flow.Flow
 
 @Entity(tableName = "reading_positions")
@@ -38,10 +39,21 @@ data class DocumentEntity(
     val sizeBytes: Long,
     val pageCount: Int,
     val lastOpenedAt: Long,
-    /** Last mode used for this document on this device: "PAGES" or "TEXT". */
-    @ColumnInfo(defaultValue = "PAGES") val readingMode: String = "PAGES",
+    /** Last mode used for this document on this device: "PAGES" or "TEXT". New books open as flowing text. */
+    @ColumnInfo(defaultValue = "PAGES") val readingMode: String = "TEXT",
     /** "PDF" or "EPUB". */
     @ColumnInfo(defaultValue = "PDF") val format: String = "PDF",
+    /** On the reader's "Currently reading" list. */
+    @ColumnInfo(defaultValue = "0") val currentlyReading: Boolean = false,
+)
+
+/** A book the reader wants to read; just a name, it needn't be in the library. */
+@Entity(tableName = "wishlist")
+data class WishlistEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val title: String,
+    val author: String = "",
+    val addedAt: Long,
 )
 
 data class LibraryRow(
@@ -52,6 +64,7 @@ data class LibraryRow(
     val pageIndex: Int?,
     val pageOffset: Float?,
     val format: String,
+    val currentlyReading: Boolean,
 )
 
 @Dao
@@ -89,9 +102,15 @@ interface DocumentDao {
     @Query("UPDATE documents SET readingMode = :mode WHERE id = :id")
     suspend fun setReadingMode(id: String, mode: String)
 
+    @Query("UPDATE documents SET title = :title WHERE id = :id")
+    suspend fun rename(id: String, title: String)
+
+    @Query("UPDATE documents SET currentlyReading = :reading WHERE id = :id")
+    suspend fun setCurrentlyReading(id: String, reading: Boolean)
+
     @Query(
         """
-        SELECT d.id, d.title, d.pageCount, d.lastOpenedAt, p.pageIndex, p.pageOffset, d.format
+        SELECT d.id, d.title, d.pageCount, d.lastOpenedAt, p.pageIndex, p.pageOffset, d.format, d.currentlyReading
         FROM documents d LEFT JOIN reading_positions p ON p.documentId = d.id
         ORDER BY d.lastOpenedAt DESC
         """
@@ -99,17 +118,42 @@ interface DocumentDao {
     fun library(): Flow<List<LibraryRow>>
 }
 
+@Dao
+interface WishlistDao {
+    @Query("SELECT * FROM wishlist ORDER BY addedAt DESC")
+    fun all(): Flow<List<WishlistEntity>>
+
+    @Insert
+    suspend fun add(entity: WishlistEntity)
+
+    @Query("DELETE FROM wishlist WHERE id = :id")
+    suspend fun remove(id: Long)
+}
+
 @Database(
-    entities = [PositionEntity::class, DocumentEntity::class],
-    version = 3,
+    entities = [PositionEntity::class, DocumentEntity::class, WishlistEntity::class],
+    version = 4,
     exportSchema = true,
     autoMigrations = [AutoMigration(from = 1, to = 2), AutoMigration(from = 2, to = 3)],
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun positions(): PositionDao
     abstract fun documents(): DocumentDao
+    abstract fun wishlist(): WishlistDao
 
     companion object {
+        /** Adds the reading lists, and turns every PDF to flowing text, now the default. */
+        val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE documents ADD COLUMN currentlyReading INTEGER NOT NULL DEFAULT 0")
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS wishlist (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "title TEXT NOT NULL, author TEXT NOT NULL, addedAt INTEGER NOT NULL)"
+                )
+                db.execSQL("UPDATE documents SET readingMode = 'TEXT'")
+            }
+        }
+
         fun open(context: Context, name: String? = "reader.db"): AppDatabase {
             val builder = if (name == null) {
                 Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java)
@@ -120,6 +164,7 @@ abstract class AppDatabase : RoomDatabase() {
             // commit, so it survives sudden power loss. Position writes are rare enough
             // (debounced) that the extra fsync costs nothing noticeable.
             return builder
+                .addMigrations(MIGRATION_3_4)
                 .setJournalMode(JournalMode.WRITE_AHEAD_LOGGING)
                 .addCallback(object : Callback() {
                     override fun onOpen(db: androidx.sqlite.db.SupportSQLiteDatabase) {

@@ -68,6 +68,12 @@ export class Store {
       ['CREATE TABLE IF NOT EXISTS book_chunks (key TEXT NOT NULL, idx INTEGER NOT NULL, data BLOB NOT NULL, PRIMARY KEY (key, idx))'],
       ['CREATE TABLE IF NOT EXISTS rate_events (key TEXT NOT NULL, at INTEGER NOT NULL)'],
       ['CREATE INDEX IF NOT EXISTS rate_events_key ON rate_events(key, at)'],
+      // One-time codes that hand a website sign-in to an app (auth.js, createAppCode).
+      [`CREATE TABLE IF NOT EXISTS app_codes (
+          code_hash TEXT PRIMARY KEY,
+          account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+          challenge TEXT NOT NULL,
+          expires_at INTEGER NOT NULL)`],
       [`CREATE TABLE IF NOT EXISTS dev_mail (
           id INTEGER PRIMARY KEY, to_addr TEXT NOT NULL, subject TEXT NOT NULL, text TEXT NOT NULL, created_at INTEGER NOT NULL)`],
     ]);
@@ -173,6 +179,22 @@ export class Store {
   async consumeCode(email, purpose, codeHash) {
     return (await this.db.run('DELETE FROM verification_codes WHERE email = ? AND purpose = ? AND code_hash = ?',
       email, purpose, codeHash)).changes === 1;
+  }
+
+  // App sign-in codes (stored hashed, single use)
+
+  async putAppCode(codeHash, accountId, challenge, expiresAt, now) {
+    await this.db.run('DELETE FROM app_codes WHERE expires_at < ?', now);
+    await this.db.run('INSERT INTO app_codes (code_hash, account_id, challenge, expires_at) VALUES (?, ?, ?, ?)',
+      codeHash, accountId, challenge, expiresAt);
+  }
+
+  /** Returns the code's row and deletes it; null if it's unknown or another request took it first. */
+  async takeAppCode(codeHash) {
+    const row = await this.db.first('SELECT * FROM app_codes WHERE code_hash = ?', codeHash);
+    if (!row) return null;
+    const taken = (await this.db.run('DELETE FROM app_codes WHERE code_hash = ?', codeHash)).changes === 1;
+    return taken ? row : null;
   }
 
   // Apple / Google identities

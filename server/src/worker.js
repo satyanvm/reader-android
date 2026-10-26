@@ -39,6 +39,9 @@ const BOOK_FORMATS = new Set(['PDF', 'EPUB']);
  *   POST /v1/auth/password/reset   { email, code, password }    -> session
  *   POST /v1/auth/apple | /google  { idToken }                  -> session
  *   GET  /v1/auth/providers        -> { apple, google, emailCodes }  (which sign-in options to show)
+ *   POST /v1/auth/app/code         { challenge }  (signed in)   -> { code }  (a website sign-in,
+ *                                                                  handed to an app; see auth.js)
+ *   POST /v1/auth/app/token        { code, verifier }           -> session
  *   GET  /v1/me                    -> { email }
  *   POST /v1/auth/signout          -> ends this session
  *   GET  /healthz
@@ -87,6 +90,7 @@ export function createHandler({ store, blobs, env = {}, keys = new KeySet(), log
         'POST /v1/auth/password/reset': async (b) => [200, await auth.resetPassword(b.email, b.code, b.password)],
         'POST /v1/auth/apple': async (b) => [200, await auth.signInWithProvider('apple', b.idToken)],
         'POST /v1/auth/google': async (b) => [200, await auth.signInWithProvider('google', b.idToken)],
+        'POST /v1/auth/app/token': async (b) => [200, await auth.exchangeAppCode(b.code, b.verifier)],
       };
       const authRoute = authRoutes[`${method} ${pathname}`];
       if (authRoute) {
@@ -103,6 +107,14 @@ export function createHandler({ store, blobs, env = {}, keys = new KeySet(), log
         const accountId = await store.accountForToken(token);
         if (accountId === null) throw new HttpError(401, 'missing or invalid token', 'unauthorized');
         return await libraryRoute({ store, blobs, accountId, request, now: now() });
+      }
+
+      if (pathname === '/v1/auth/app/code') {
+        const accountId = await store.accountForToken(token);
+        if (accountId === null) throw new HttpError(401, 'missing or invalid token', 'unauthorized');
+        if (method !== 'POST') throw new HttpError(405, 'method not allowed');
+        const body = await readJson(request);
+        return json(200, await auth.createAppCode(accountId, body?.challenge));
       }
 
       if (pathname === '/v1/me' || pathname === '/v1/auth/signout' || POSITION_ROUTE.test(pathname)) {
@@ -205,7 +217,7 @@ function validateBook(b, documentId) {
 /** Test-only helpers (TEST_MODE=1): reset the database, make a token, read dev mail. */
 async function testRoute(store, pathname, method, request, url) {
   if (pathname === '/__test/reset' && method === 'POST') {
-    await store.db.batch(['reading_positions', 'library_books', 'book_files', 'book_chunks', 'tokens', 'identities', 'verification_codes', 'rate_events', 'dev_mail', 'accounts']
+    await store.db.batch(['reading_positions', 'library_books', 'book_files', 'book_chunks', 'tokens', 'identities', 'verification_codes', 'app_codes', 'rate_events', 'dev_mail', 'accounts']
       .map((t) => [`DELETE FROM ${t}`]));
     return json(200, { ok: true });
   }
