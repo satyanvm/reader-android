@@ -131,7 +131,11 @@ class MainActivity : ComponentActivity() {
                         )
                     }
                     composable("pricing") {
-                        PricingScreen(onBack = { nav.popBackStack() })
+                        PricingScreen(
+                            account = graph.account,
+                            onSignIn = { nav.navigate("account") { launchSingleTop = true } },
+                            onBack = { nav.popBackStack() },
+                        )
                     }
                     composable("account") {
                         AccountScreen(

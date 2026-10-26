@@ -25,6 +25,8 @@ class AccountException(val code: String, message: String) : Exception(message)
  *   POST /v1/auth/google           { idToken }                -> session
  *   GET  /v1/auth/providers        -> { apple, google }
  *   POST /v1/auth/signout          ends this session
+ *   GET  /v1/billing               -> { pro, plan, status, renewsAt, endsAt, manageUrl, plans }
+ *   POST /v1/billing/checkout      { plan }                   -> { url }  (Lemon Squeezy checkout)
  */
 class AccountApi(
     private val baseUrl: String,
@@ -79,6 +81,39 @@ class AccountApi(
             // Best effort: the local session is gone either way.
         }
     }
+
+    /**
+     * The account's paid plan. [plans] are the plans this server can sell ("monthly", "yearly");
+     * [manageUrl] opens Lemon Squeezy's page to change or cancel the subscription.
+     */
+    data class Billing(
+        val pro: Boolean,
+        val plan: String?,
+        val renewsAt: Long?,
+        val endsAt: Long?,
+        val manageUrl: String?,
+        val plans: List<String>,
+    )
+
+    suspend fun billing(token: String): Billing {
+        val o = call("GET", "v1/billing", token = token)
+        fun str(key: String) = o.optString(key).takeIf { !o.isNull(key) && it.isNotEmpty() }
+        fun time(key: String) = if (o.isNull(key)) null else o.optLong(key).takeIf { it > 0 }
+        val plans = o.optJSONArray("plans")
+        return Billing(
+            pro = o.optBoolean("pro"),
+            plan = str("plan"),
+            renewsAt = time("renewsAt"),
+            endsAt = time("endsAt"),
+            manageUrl = str("manageUrl"),
+            plans = List(plans?.length() ?: 0) { plans!!.getString(it) },
+        )
+    }
+
+    /** A checkout page for [plan] ("monthly" or "yearly"), tied to the signed-in account. */
+    suspend fun checkout(token: String, plan: String): String =
+        call("POST", "v1/billing/checkout", mapOf("plan" to plan), token = token).optString("url")
+            .ifEmpty { throw AccountException("bad_response", "The sync server didn't return a checkout page.") }
 
     private fun session(o: JSONObject): AccountSessionInfo {
         val token = o.optString("token")

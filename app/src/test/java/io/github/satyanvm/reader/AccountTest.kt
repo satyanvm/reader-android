@@ -201,6 +201,35 @@ class AccountTest {
         assertTrue(account.notice.value != null)
         assertEquals(1, device.repo.pending().size)
     }
+
+    @Test
+    fun `billing shows the plan, gives a checkout page, and a revoked token signs out`() = runBlocking<Unit> {
+        assertNull(account.billing())
+
+        server.addAccount("p@example.com", "password1")
+        account.signIn("p@example.com", "password1")
+        val free = account.billing()!!
+        assertFalse(free.pro)
+        assertEquals(listOf("monthly", "yearly"), free.plans)
+        assertEquals("https://reader.lemonsqueezy.com/buy/monthly?account=p@example.com", account.checkoutUrl("monthly"))
+
+        server.pro = true
+        val pro = account.billing()!!
+        assertTrue(pro.pro)
+        assertEquals("Monthly", pro.plan)
+        assertEquals(1_800_000_000_000, pro.renewsAt)
+        assertNull(pro.endsAt)
+        assertEquals("https://reader.lemonsqueezy.com/billing", pro.manageUrl)
+
+        server.sessions.clear()
+        try {
+            account.billing()
+            fail("expected unauthorized")
+        } catch (e: AccountException) {
+            assertEquals("unauthorized", e.code)
+        }
+        assertEquals(SyncAccount.Stage.SignedOut, account.stage.value)
+    }
 }
 
 /** Just enough of server/src/worker.js for the client: accounts, codes, sessions, positions. */
@@ -212,6 +241,7 @@ private class FakeAccountServer {
     var lastCode: String? = null
     var emailCodes = true
     var positionPuts = 0
+    var pro = false
     private val positions = mutableMapOf<String, JSONObject>()
     private var nextCode = 123456
     private var nextToken = 1
@@ -308,6 +338,16 @@ private class FakeAccountServer {
                 sessions.remove(bearer)
                 200 to JSONObject().put("status", "signed_out")
             }
+            "GET /v1/billing" -> if (bearer !in sessions) error(401, "unauthorized", "missing or invalid token") else
+                200 to JSONObject()
+                    .put("pro", pro)
+                    .put("plan", if (pro) "Monthly" else JSONObject.NULL)
+                    .put("renewsAt", if (pro) 1_800_000_000_000 else JSONObject.NULL)
+                    .put("endsAt", JSONObject.NULL)
+                    .put("manageUrl", if (pro) "https://reader.lemonsqueezy.com/billing" else JSONObject.NULL)
+                    .put("plans", org.json.JSONArray(listOf("monthly", "yearly")))
+            "POST /v1/billing/checkout" -> if (bearer !in sessions) error(401, "unauthorized", "missing or invalid token") else
+                200 to JSONObject().put("url", "https://reader.lemonsqueezy.com/buy/${b.getString("plan")}?account=${sessions[bearer]}")
             else -> {
                 if (!path.startsWith("/v1/reading-positions/")) return error(404, "not_found", "not found")
                 if (bearer == null || bearer !in sessions) return error(401, "unauthorized", "missing or invalid token")
