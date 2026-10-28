@@ -66,10 +66,6 @@ internal class PageTurns {
 
     fun release(scope: CoroutineScope, t: Turn, commit: Boolean) = settle(scope, t, commit)
 
-    fun tap(scope: CoroutineScope, forward: Boolean) {
-        begin(forward, horizontal = true)?.let { settle(scope, it, commit = true) }
-    }
-
     /** Shows [page] straight away (a restore). */
     fun show(page: Int) {
         finishNow()
@@ -202,9 +198,8 @@ private fun DrawScope.span(horizontal: Boolean, length: Float) =
 
 /**
  * Page gestures: drag left or up to turn forward, right or down to turn back (the page follows the
- * finger and finishes, or falls back, on release). Tap the left third to go back, the right third
- * to go forward, and the middle to show the reading controls. While they're up ([controlsShown]),
- * any tap or turn hides them ([onMenuTap]).
+ * finger and finishes, or falls back, on release). A tap anywhere shows the reading controls, and
+ * while they're up ([controlsShown]) any tap or turn hides them ([onMenuTap]).
  */
 internal fun Modifier.pageGestures(
     turns: PageTurns,
@@ -262,12 +257,8 @@ internal fun Modifier.pageGestures(
         val end = up ?: return@awaitEachGesture
         if (turn != null || moved || multiTouch) return@awaitEachGesture
         if (end.uptimeMillis - down.uptimeMillis >= viewConfiguration.longPressTimeoutMillis) return@awaitEachGesture
-        when {
-            controlsShown() -> onMenuTap()
-            down.position.x < size.width / 3f -> turns.tap(scope, forward = false)
-            down.position.x > size.width * 2f / 3f -> turns.tap(scope, forward = true)
-            else -> onMenuTap()
-        }
+        // A tap anywhere shows or hides the menus; only a swipe turns the page.
+        onMenuTap()
     }
 }
 

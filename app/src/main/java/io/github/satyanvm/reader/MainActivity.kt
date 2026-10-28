@@ -142,6 +142,8 @@ class MainActivity : ComponentActivity() {
                             account = graph.account,
                             google = graph.googleSignIn,
                             onBack = { nav.popBackStack() },
+                            // Back to the library, even when sign-in started from Pricing.
+                            onSignedIn = { nav.popBackStack("library", inclusive = false) },
                         )
                     }
                     composable("reader/{id}") { entry ->

@@ -4,13 +4,23 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.sp
+import io.github.satyanvm.reader.R
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardOptions
@@ -80,7 +90,7 @@ fun LibraryScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Library") },
+                title = { Wordmark() },
                 actions = {
                     TextButton(onClick = onPricing) { Text("Pricing") }
                     if (signedIn) {
@@ -303,6 +313,20 @@ private fun HardcoverIcon() {
         drawRect(CoverFoil, topLeft = Offset(bandX, h * 0.22f), size = Size(bandW, 1.5.dp.toPx()))
         drawRect(CoverFoil, topLeft = Offset(bandX, h * 0.30f), size = Size(bandW, 1.dp.toPx()))
         drawRect(CoverFoil, topLeft = Offset(bandX, h * 0.72f), size = Size(bandW, 1.dp.toPx()))
+    }
+}
+
+/** The Readserene mark and name, as on the website's header. */
+@Composable
+private fun Wordmark() {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Image(
+            painter = painterResource(R.drawable.ic_readserene),
+            contentDescription = null,
+            modifier = Modifier.size(30.dp).clip(RoundedCornerShape(7.dp)),
+        )
+        Spacer(Modifier.width(10.dp))
+        Text("Readserene", fontWeight = FontWeight.SemiBold, letterSpacing = (-0.3).sp)
     }
 }
 

@@ -21,7 +21,9 @@ class ReaderViewModel(private val documentId: String, private val graph: AppGrap
 
     val theme: StateFlow<TextTheme> = graph.readingPrefs.theme
 
-    val flow: StateFlow<TextFlow> = graph.readingPrefs.flow
+    private val _flow = MutableStateFlow(TextFlow.PAGED)
+    /** Every book opens as pages that turn; scrolling is a choice for this sitting only. */
+    val flow: StateFlow<TextFlow> = _flow.asStateFlow()
 
     private var pdfFile: File? = null
 
@@ -70,7 +72,9 @@ class ReaderViewModel(private val documentId: String, private val graph: AppGrap
 
     fun setTheme(theme: TextTheme) = graph.readingPrefs.setTheme(theme)
 
-    fun setFlow(flow: TextFlow) = graph.readingPrefs.setFlow(flow)
+    fun setFlow(flow: TextFlow) {
+        _flow.value = flow
+    }
 
     private fun ensureText(file: File, pdf: PagedDocument, from: Int) {
         if (_text.value != null) return
