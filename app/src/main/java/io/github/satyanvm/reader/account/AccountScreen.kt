@@ -1,6 +1,10 @@
 package io.github.satyanvm.reader.account
 
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -32,7 +36,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -52,6 +61,7 @@ fun AccountScreen(
     account: SyncAccount,
     google: GoogleSignIn,
     onBack: () -> Unit,
+    onSignedIn: () -> Unit,
 ) {
     val stage by account.stage.collectAsStateWithLifecycle()
     val providers by account.providers.collectAsStateWithLifecycle()
@@ -63,6 +73,12 @@ fun AccountScreen(
     var info by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(Unit) { account.loadProviders() }
+
+    // Signing in here (not arriving already signed in) goes straight back to the library.
+    val startedSignedIn = remember { stage is SyncAccount.Stage.SignedIn }
+    LaunchedEffect(stage) {
+        if (!startedSignedIn && stage is SyncAccount.Stage.SignedIn) onSignedIn()
+    }
 
     fun submit(action: suspend () -> Unit) {
         if (busy) return
@@ -131,7 +147,8 @@ fun AccountScreen(
                 )
                 SyncAccount.Stage.SignedOut -> SignedOutContent(
                     busy = busy,
-                    showGoogle = providers.google && google.isConfigured,
+                    // Always offered; if this build or the server isn't set up for it, tapping says so.
+                    showGoogle = true,
                     emailCodes = providers.emailCodes,
                     onSignIn = { email, password ->
                         account.dismissNotice()
@@ -193,6 +210,19 @@ private fun SignedOutContent(
         },
         style = MaterialTheme.typography.bodyMedium,
     )
+    // One button for both: a new Google account is created on first use.
+    if (showGoogle && mode != SignedOutMode.Forgot) {
+        OutlinedButton(onClick = onGoogle, enabled = !busy, modifier = Modifier.fillMaxWidth().height(52.dp)) {
+            GoogleG()
+            Spacer(Modifier.width(12.dp))
+            Text(if (mode == SignedOutMode.Create) "Sign up with Google" else "Sign in with Google")
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            HorizontalDivider(Modifier.weight(1f))
+            Text("or with email", style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(horizontal = 12.dp))
+            HorizontalDivider(Modifier.weight(1f))
+        }
+    }
     OutlinedTextField(
         value = email,
         onValueChange = { email = it },
@@ -247,12 +277,6 @@ private fun SignedOutContent(
         }
         else -> TextButton(onClick = { mode = SignedOutMode.SignIn }) { Text("Back to sign in") }
     }
-    if (showGoogle && mode != SignedOutMode.Forgot) {
-        HorizontalDivider()
-        OutlinedButton(onClick = onGoogle, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
-            Text("Continue with Google")
-        }
-    }
 }
 
 @Composable
@@ -303,6 +327,23 @@ private fun CodeContent(
     Spacer(Modifier.height(4.dp))
     TextButton(onClick = onResend, enabled = !busy) { Text("Send a new code") }
     TextButton(onClick = onCancel, enabled = !busy) { Text("Cancel") }
+}
+
+/** Google's "G" in its four colours, drawn so the app needs no image for it. */
+@Composable
+private fun GoogleG() {
+    Canvas(Modifier.size(20.dp)) {
+        val stroke = size.minDimension * 0.2f
+        val inset = stroke / 2
+        val arc = Size(size.width - stroke, size.height - stroke)
+        val at = Offset(inset, inset)
+        val style = Stroke(stroke)
+        drawArc(Color(0xFFEA4335), 200f, 115f, false, at, arc, style = style)
+        drawArc(Color(0xFFFBBC05), 135f, 65f, false, at, arc, style = style)
+        drawArc(Color(0xFF34A853), 45f, 90f, false, at, arc, style = style)
+        drawArc(Color(0xFF4285F4), 0f, 45f, false, at, arc, style = style)
+        drawRect(Color(0xFF4285F4), topLeft = Offset(size.width / 2, size.height / 2 - stroke / 2), size = Size(size.width / 2, stroke))
+    }
 }
 
 /** Matches the server's minimum (server/src/auth.js). */

@@ -6,7 +6,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -179,7 +178,7 @@ private fun BookPages(
 
         val b = book
         if (b == null) {
-            CircularProgressIndicator(Modifier.align(Alignment.Center))
+            BookLoading(colors)
             return@BoxWithConstraints
         }
 
@@ -494,9 +493,7 @@ internal fun PdfBookPages(
         BookSource(out, run, preparing = if (all) null else "Preparing pages: ${text.loaded.size} of ${text.pageCount}")
     }
     if (source == null) {
-        Box(Modifier.fillMaxSize().background(colors.background), contentAlignment = Alignment.Center) {
-            CircularProgressIndicator()
-        }
+        BookLoading(colors, real = text.loaded.size.toFloat() / maxOf(1, text.pageCount))
         return
     }
     val pictures = remember(pdf) {

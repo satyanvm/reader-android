@@ -38,6 +38,22 @@ class SyncScheduler(private val context: Context) {
             .enqueueUniqueWork(ONE_SHOT, ExistingWorkPolicy.KEEP, request)
     }
 
+    /**
+     * Pushes pending positions only, in its own job, so a page turn goes up within seconds even
+     * while [requestSync]'s job is busy with a long book upload or download.
+     */
+    fun pushPositions(delaySeconds: Long = 5) {
+        val request = OneTimeWorkRequestBuilder<PushWorker>()
+            .setConstraints(network)
+            .setInitialDelay(delaySeconds, TimeUnit.SECONDS)
+            .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
+            .build()
+        // KEEP: a queued push reads every pending row when it starts. A change made while a
+        // push is executing is caught by PushWorker pushing again until nothing is pending.
+        WorkManager.getInstance(context)
+            .enqueueUniqueWork(PUSH, ExistingWorkPolicy.KEEP, request)
+    }
+
     fun schedulePeriodic() {
         val request = PeriodicWorkRequestBuilder<SyncWorker>(15, TimeUnit.MINUTES)
             .setConstraints(network)
@@ -48,6 +64,7 @@ class SyncScheduler(private val context: Context) {
 
     private companion object {
         const val ONE_SHOT = "position-sync"
+        const val PUSH = "position-push"
         const val PERIODIC = "position-sync-periodic"
     }
 }
@@ -58,5 +75,21 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
         val pushed = graph.syncEngine.pushPending()
         val library = graph.librarySync.sync()
         return if (pushed && library) Result.success() else Result.retry()
+    }
+}
+
+class PushWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
+    override suspend fun doWork(): Result {
+        val graph = (applicationContext as ReaderApp).graph
+        // Reading continues while a push is out; send what was saved meanwhile too.
+        repeat(MAX_ROUNDS) {
+            if (!graph.syncEngine.pushPending()) return Result.retry()
+            if (graph.positions.pending().isEmpty()) return Result.success()
+        }
+        return Result.success()
+    }
+
+    private companion object {
+        const val MAX_ROUNDS = 5
     }
 }

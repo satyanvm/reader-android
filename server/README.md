@@ -65,6 +65,26 @@ Passwords are hashed (see above); codes expire after 10 minutes, are single-use,
 
 `bin/admin.js` still makes token-only accounts for scripts (`add-account`, `issue-token`, `revoke-tokens`, `list`).
 
+## Payments (Lemon Squeezy)
+
+Pro is sold through [Lemon Squeezy](https://www.lemonsqueezy.com), the merchant of record: it takes the card, PayPal or wallet payment in the buyer's currency, collects and pays sales tax and VAT worldwide, and pays you out. No monthly fee; it takes a cut of each sale. The server never sees payment details. It only learns from signed webhooks which accounts have Pro, so the Android and Mac apps share one purchase.
+
+Setup (test mode first, then the same steps in live mode):
+
+1. Create a store at [app.lemonsqueezy.com](https://app.lemonsqueezy.com) and add a **subscription** product, "Reader Pro", with two variants: Monthly ($2.99/month) and Yearly ($24.99/year). Keep the prices equal to the ones in the app's `PricingScreen.kt`.
+2. For each variant, copy its **share link** (`https://<store>.lemonsqueezy.com/buy/<uuid>`) and put it in `wrangler.toml` under `[vars]`:
+   ```toml
+   LEMONSQUEEZY_CHECKOUT_MONTHLY = "https://<store>.lemonsqueezy.com/buy/<uuid>"
+   LEMONSQUEEZY_CHECKOUT_YEARLY = "https://<store>.lemonsqueezy.com/buy/<uuid>"
+   ```
+   A plan without a link shows "Coming soon" in the app.
+3. Settings → Webhooks → add `https://<your worker>/v1/billing/lemonsqueezy`, choose a signing secret, and tick the `subscription_*` events (created, updated, cancelled, resumed, expired, paused, unpaused, payment_success, payment_failed).
+4. Store the signing secret: `npx wrangler secret put LEMONSQUEEZY_WEBHOOK_SECRET`, then `npm run deploy`.
+5. Buy Pro in the app with a [test card](https://docs.lemonsqueezy.com/help/getting-started/test-mode) (`4242 4242 4242 4242`); the Pricing screen switches to "You have Pro" within a few seconds.
+6. To go live: activate the store (Lemon Squeezy reviews it), then repeat steps 2–4 with the live-mode share links and webhook. Test-mode and live-mode links and secrets differ.
+
+What counts as Pro: `active`, `on_trial` and `past_due` (while the card is retried) subscriptions, and `cancelled` ones until the end of the period paid for. Webhooks that arrive out of order are applied by Lemon Squeezy's `updated_at`, so an old event never overwrites a newer one.
+
 ## API
 
 ```
@@ -97,6 +117,14 @@ GET  /v1/auth/providers        { apple, google, emailCodes }
 GET  /v1/me                    { email }
 POST /v1/auth/signout          ends this session
 ```
+
+```
+GET  /v1/billing               { pro, plan, status, renewsAt, endsAt, manageUrl, plans }
+POST /v1/billing/checkout      { plan: "monthly" | "yearly" } → { url }   503 billing_unavailable if not set up
+POST /v1/billing/lemonsqueezy  Lemon Squeezy's webhook; X-Signature = HMAC-SHA256(secret, body), hex
+```
+
+The first two need a session; `manageUrl` is Lemon Squeezy's page to change or cancel the subscription.
 
 A session is `{ token, account: { email } }`. Errors are `{ error, code }`, where `code` is stable (`verification_required`, `invalid_code`, `invalid_credentials`, `account_exists`, `rate_limited`, ...).
 

@@ -108,6 +108,26 @@ class SyncAccount(
         signedIn(api.signInWithProvider(provider, idToken))
     }
 
+    // Paid plans
+
+    /** The signed-in account's plan; null while signed out. */
+    suspend fun billing(): AccountApi.Billing? {
+        val token = session?.token ?: return null
+        return signedInCall { api.billing(token) }
+    }
+
+    suspend fun checkoutUrl(plan: String): String {
+        val token = session?.token ?: throw AccountException("unauthorized", "Sign in to upgrade.")
+        return signedInCall { api.checkout(token, plan) }
+    }
+
+    private suspend fun <T> signedInCall(block: suspend () -> T): T = try {
+        block()
+    } catch (e: AccountException) {
+        if (e.code == "unauthorized") onUnauthorized()
+        throw e
+    }
+
     // Session
 
     suspend fun signOut() {

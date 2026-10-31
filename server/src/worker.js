@@ -1,4 +1,5 @@
 import { Auth } from './auth.js';
+import { PLANS, billingStatus, checkoutUrl, subscriptionFromEvent, validSignature } from './billing.js';
 import { DigestMismatch, dbBlobs, r2Blobs } from './blobs.js';
 import { d1 } from './db.js';
 import { HttpError } from './errors.js';
@@ -8,6 +9,8 @@ import { Store } from './store.js';
 
 /** Largest request body accepted; a position is ~300 bytes. */
 const MAX_BODY = 8 * 1024;
+/** Largest billing webhook accepted; a subscription event is a few kilobytes. */
+const MAX_WEBHOOK_BODY = 256 * 1024;
 /** A stamp this far beyond the server's clock is a broken device clock, not reading. */
 const MAX_CLOCK_LEAD_MS = 24 * 60 * 60 * 1000;
 const DOCUMENT_ID = /^[A-Za-z0-9._-]{1,128}$/;
@@ -39,6 +42,9 @@ const BOOK_FORMATS = new Set(['PDF', 'EPUB']);
  *   POST /v1/auth/password/reset   { email, code, password }    -> session
  *   POST /v1/auth/apple | /google  { idToken }                  -> session
  *   GET  /v1/auth/providers        -> { apple, google, emailCodes }  (which sign-in options to show)
+ *   POST /v1/auth/app/code         { challenge }  (signed in)   -> { code }  (a website sign-in,
+ *                                                                  handed to an app; see auth.js)
+ *   POST /v1/auth/app/token        { code, verifier }           -> session
  *   GET  /v1/me                    -> { email }
  *   POST /v1/auth/signout          -> ends this session
  *   GET  /healthz
@@ -50,6 +56,12 @@ const BOOK_FORMATS = new Set(['PDF', 'EPUB']);
  *   DELETE /v1/library/{id}            -> 200 { removed }  (the file goes too)
  *   PUT    /v1/library/{id}/file       the book's bytes (SHA-256 = {id}, sizeBytes long) -> 200 book
  *   GET    /v1/library/{id}/file       -> the bytes | 404
+ *
+ * Paid plans (see billing.js):
+ *
+ *   GET  /v1/billing                -> { pro, plan, status, renewsAt, endsAt, manageUrl, plans }
+ *   POST /v1/billing/checkout       { plan: "monthly" | "yearly" } -> { url }  (open in a browser)
+ *   POST /v1/billing/lemonsqueezy   Lemon Squeezy's webhook, signed with X-Signature
  */
 export function createHandler({ store, blobs, env = {}, keys = new KeySet(), log = console.log, devSink }) {
   const list = (v) => String(v ?? '').split(',').map((s) => s.trim()).filter(Boolean);
@@ -87,6 +99,7 @@ export function createHandler({ store, blobs, env = {}, keys = new KeySet(), log
         'POST /v1/auth/password/reset': async (b) => [200, await auth.resetPassword(b.email, b.code, b.password)],
         'POST /v1/auth/apple': async (b) => [200, await auth.signInWithProvider('apple', b.idToken)],
         'POST /v1/auth/google': async (b) => [200, await auth.signInWithProvider('google', b.idToken)],
+        'POST /v1/auth/app/token': async (b) => [200, await auth.exchangeAppCode(b.code, b.verifier)],
       };
       const authRoute = authRoutes[`${method} ${pathname}`];
       if (authRoute) {
@@ -96,6 +109,11 @@ export function createHandler({ store, blobs, env = {}, keys = new KeySet(), log
         return json(status, result);
       }
 
+      if (pathname === '/v1/billing/lemonsqueezy') {
+        if (method !== 'POST') throw new HttpError(405, 'method not allowed');
+        return await lemonSqueezyWebhook({ store, env, request, now: now(), log });
+      }
+
       if (testMode && pathname.startsWith('/__test/')) return testRoute(store, pathname, method, request, url);
 
       const token = bearer(request);
@@ -103,6 +121,29 @@ export function createHandler({ store, blobs, env = {}, keys = new KeySet(), log
         const accountId = await store.accountForToken(token);
         if (accountId === null) throw new HttpError(401, 'missing or invalid token', 'unauthorized');
         return await libraryRoute({ store, blobs, accountId, request, now: now() });
+      }
+
+      if (pathname === '/v1/billing' || pathname === '/v1/billing/checkout') {
+        const accountId = await store.accountForToken(token);
+        if (accountId === null) throw new HttpError(401, 'missing or invalid token', 'unauthorized');
+        if (pathname === '/v1/billing') {
+          if (method !== 'GET') throw new HttpError(405, 'method not allowed');
+          return json(200, billingStatus(await store.subscriptions(accountId), now(), env));
+        }
+        if (method !== 'POST') throw new HttpError(405, 'method not allowed');
+        const plan = (await readJson(request))?.plan;
+        if (!PLANS.includes(plan)) throw new HttpError(422, `plan must be one of ${PLANS.join(', ')}`);
+        const url = checkoutUrl(env, plan, await store.accountById(accountId));
+        if (!url) throw new HttpError(503, 'this plan cannot be bought yet', 'billing_unavailable');
+        return json(200, { url });
+      }
+
+      if (pathname === '/v1/auth/app/code') {
+        const accountId = await store.accountForToken(token);
+        if (accountId === null) throw new HttpError(401, 'missing or invalid token', 'unauthorized');
+        if (method !== 'POST') throw new HttpError(405, 'method not allowed');
+        const body = await readJson(request);
+        return json(200, await auth.createAppCode(accountId, body?.challenge));
       }
 
       if (pathname === '/v1/me' || pathname === '/v1/auth/signout' || POSITION_ROUTE.test(pathname)) {
@@ -142,6 +183,29 @@ export function createHandler({ store, blobs, env = {}, keys = new KeySet(), log
       return json(500, { error: 'internal error' });
     }
   };
+}
+
+async function lemonSqueezyWebhook({ store, env, request, now, log }) {
+  const secret = env.LEMONSQUEEZY_WEBHOOK_SECRET;
+  if (!secret) throw new HttpError(503, 'billing is not set up on this server', 'billing_unavailable');
+  if (Number(request.headers.get('content-length') ?? 0) > MAX_WEBHOOK_BODY) throw new HttpError(413, 'body too large');
+  const raw = await request.text();
+  if (raw.length > MAX_WEBHOOK_BODY) throw new HttpError(413, 'body too large');
+  if (!(await validSignature(secret, raw, request.headers.get('x-signature')))) throw new HttpError(401, 'bad signature');
+  let payload;
+  try {
+    payload = JSON.parse(raw);
+  } catch {
+    throw new HttpError(400, 'body is not JSON');
+  }
+  const sub = subscriptionFromEvent(payload);
+  const event = String(payload?.meta?.event_name ?? '');
+  // Anything else (orders, refunds, license keys) needs nothing here; say so, so it isn't retried.
+  if (!sub) return json(200, { ok: true, ignored: event });
+  const stored = await store.putSubscription('lemonsqueezy', sub, now);
+  // Acknowledged either way: retrying wouldn't tie it to an account.
+  if (!stored) log(`billing: ${event} for subscription ${sub.subscriptionId} has no known account`);
+  return json(200, { ok: true, stored });
 }
 
 async function libraryRoute({ store, blobs, accountId, request, now }) {
@@ -205,7 +269,7 @@ function validateBook(b, documentId) {
 /** Test-only helpers (TEST_MODE=1): reset the database, make a token, read dev mail. */
 async function testRoute(store, pathname, method, request, url) {
   if (pathname === '/__test/reset' && method === 'POST') {
-    await store.db.batch(['reading_positions', 'library_books', 'book_files', 'book_chunks', 'tokens', 'identities', 'verification_codes', 'rate_events', 'dev_mail', 'accounts']
+    await store.db.batch(['subscriptions', 'reading_positions', 'library_books', 'book_files', 'book_chunks', 'tokens', 'identities', 'verification_codes', 'app_codes', 'rate_events', 'dev_mail', 'accounts']
       .map((t) => [`DELETE FROM ${t}`]));
     return json(200, { ok: true });
   }

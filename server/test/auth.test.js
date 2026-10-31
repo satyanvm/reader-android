@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { sign } from 'node:crypto';
+import { createHash, sign } from 'node:crypto';
 import { after, before, beforeEach, describe, test } from 'node:test';
 import { APPLE_BUNDLE, client, GOOGLE_CLIENT, otherKey, signingKey, startServer } from './support.js';
 
@@ -216,5 +216,38 @@ describe('Sign in with Apple and Google', () => {
     }
     const unverified = await post('/v1/auth/google', { idToken: google('y', 'y@y.com', { email_verified: false }) });
     assert.equal(unverified.body.code, 'email_required');
+  });
+});
+
+describe('signing in an app through the website', () => {
+  const verifier = 'v'.repeat(20) + 'erifier-made-by-the-app-0123456789';
+  const challenge = createHash('sha256').update(verifier).digest('base64url');
+
+  test('the site gets a code for a signed-in account, and the app trades it with its verifier for its own session', async () => {
+    const site = await signUpAndVerify('web@example.com');
+    const made = await post('/v1/auth/app/code', { challenge }, site);
+    assert.equal(made.status, 200);
+    const app = await post('/v1/auth/app/token', { code: made.body.code, verifier });
+    assert.equal(app.status, 200);
+    assert.equal(app.body.account.email, 'web@example.com');
+    assert.notEqual(app.body.token, site);
+    assert.equal((await get('/v1/me', app.body.token)).body.email, 'web@example.com');
+    // Single use.
+    assert.equal((await post('/v1/auth/app/token', { code: made.body.code, verifier })).body.code, 'invalid_code');
+  });
+
+  test('a code is useless without the verifier, after it expires, or without a signed-in site', async () => {
+    const site = await signUpAndVerify('web2@example.com');
+    const code = (await post('/v1/auth/app/code', { challenge }, site)).body.code;
+    const wrong = await post('/v1/auth/app/token', { code, verifier: verifier.replace('v', 'w') });
+    assert.equal(wrong.status, 400);
+    assert.equal((await post('/v1/auth/app/token', { code, verifier })).status, 400, 'a wrong guess used it up');
+
+    const late = (await post('/v1/auth/app/code', { challenge }, site)).body.code;
+    clock += 6 * 60 * 1000;
+    assert.equal((await post('/v1/auth/app/token', { code: late, verifier })).status, 400);
+
+    assert.equal((await post('/v1/auth/app/code', { challenge })).status, 401);
+    assert.equal((await post('/v1/auth/app/code', { challenge: 'short' }, site)).status, 400);
   });
 });

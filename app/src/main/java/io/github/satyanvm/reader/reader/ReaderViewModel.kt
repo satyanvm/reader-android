@@ -21,7 +21,9 @@ class ReaderViewModel(private val documentId: String, private val graph: AppGrap
 
     val theme: StateFlow<TextTheme> = graph.readingPrefs.theme
 
-    val flow: StateFlow<TextFlow> = graph.readingPrefs.flow
+    private val _flow = MutableStateFlow(TextFlow.PAGED)
+    /** Every book opens as pages that turn; scrolling is a choice for this sitting only. */
+    val flow: StateFlow<TextFlow> = _flow.asStateFlow()
 
     private var pdfFile: File? = null
 
@@ -37,7 +39,8 @@ class ReaderViewModel(private val documentId: String, private val graph: AppGrap
             } else {
                 pdfFile = file
                 val pdf = PdfDocument.open(file)
-                val mode = runCatching { ReadingMode.valueOf(doc.readingMode) }.getOrDefault(ReadingMode.PAGES)
+                // Flowing text, a page at a time, unless this book was switched to its original pages.
+                val mode = runCatching { ReadingMode.valueOf(doc.readingMode) }.getOrDefault(ReadingMode.TEXT)
                 if (mode == ReadingMode.TEXT) {
                     // Build around the saved page first, so the restore target is ready soonest.
                     ensureText(file, pdf, from = graph.positions.load(documentId)?.pageIndex ?: 0)
@@ -69,7 +72,9 @@ class ReaderViewModel(private val documentId: String, private val graph: AppGrap
 
     fun setTheme(theme: TextTheme) = graph.readingPrefs.setTheme(theme)
 
-    fun setFlow(flow: TextFlow) = graph.readingPrefs.setFlow(flow)
+    fun setFlow(flow: TextFlow) {
+        _flow.value = flow
+    }
 
     private fun ensureText(file: File, pdf: PagedDocument, from: Int) {
         if (_text.value != null) return

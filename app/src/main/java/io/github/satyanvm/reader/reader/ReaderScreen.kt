@@ -5,6 +5,9 @@ import android.content.Context
 import android.content.ContextWrapper
 import android.graphics.Bitmap
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
@@ -20,16 +23,18 @@ import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -50,7 +55,9 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -63,8 +70,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.layout
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.Constraints
@@ -104,48 +115,79 @@ fun ReaderScreen(vm: ReaderViewModel, onBack: () -> Unit) {
 
     NoticeEffect(state.notice, snackbar, controller)
 
-    // Reading is full screen: the bars and the scrubber show on a tap and hide on the next one.
-    // They float over the page rather than pushing it around, so showing them never reflows text.
+    // The status bar stays, so the time and battery are always readable; the page sits below it.
+    // A tap shows the app bar and the scrubber, like Play Books: the page shrinks (scaled, so the
+    // text never reflows) and the bars fill the space it leaves above and below. The next tap
+    // brings the page back to full size.
     var controlsShown by rememberSaveable { mutableStateOf(false) }
     val showControls = controlsShown || state.document == null
-    ImmersiveEffect(immersive = !showControls)
+    ImmersiveEffect(immersive = !showControls, darkPage = colors.background.luminance() < 0.5f)
     val toggleControls = { controlsShown = !controlsShown }
     val book = remember { BookProgress() }
+    val meter = remember { LoadingMeter() }
+    val shrink by animateFloatAsState(
+        targetValue = if (showControls && state.document != null) 1f else 0f,
+        animationSpec = tween(280, easing = FastOutSlowInEasing),
+        label = "shrink",
+    )
+    val chrome = lerp(colors.background, colors.text, 0.07f)
+    var topBarPx by remember { mutableIntStateOf(0) }
+    var bottomBarPx by remember { mutableIntStateOf(0) }
 
     Scaffold(
-        containerColor = colors.background,
+        containerColor = lerp(colors.background, chrome, shrink),
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
         snackbarHost = { SnackbarHost(snackbar) },
     ) { padding ->
-        Box(Modifier.padding(padding).fillMaxSize()) {
+        BoxWithConstraints(Modifier.padding(padding).fillMaxSize()) {
+            val density = LocalDensity.current
+            val fullHeight = constraints.maxHeight.toFloat()
+            val gapPx = with(density) { 12.dp.toPx() }
+            // Small enough to sit between the bars, centred in the space they leave.
+            val shrunk = ((fullHeight - topBarPx - bottomBarPx - gapPx * 2) / fullHeight).coerceIn(0.6f, 1f)
+            val scale = 1f - (1f - shrunk) * shrink
+            val corner = with(density) { 14.dp.toPx() } * shrink
             Box(
-                Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.displayCutout),
+                Modifier
+                    .fillMaxSize()
+                    .graphicsLayer {
+                        scaleX = scale
+                        scaleY = scale
+                        translationY = (topBarPx - bottomBarPx) / 2f * shrink
+                        shape = RoundedCornerShape(corner)
+                        clip = shrink > 0f
+                        shadowElevation = 10.dp.toPx() * shrink
+                    }
+                    .background(colors.background)
+                    .windowInsetsPadding(WindowInsets.displayCutout.union(WindowInsets.statusBars)),
                 contentAlignment = Alignment.Center,
             ) {
                 val doc = state.document
-                when {
-                    state.phase == Phase.Loading -> CircularProgressIndicator()
-                    state.phase is Phase.Failed -> Text((state.phase as Phase.Failed).message)
-                    doc == null -> Unit
-                    doc is EpubBook ->
-                        if (paged) EpubBookPages(doc, state, controller, colors, book, showControls, toggleControls)
-                        else EpubPages(doc, state, controller, colors, toggleControls)
-                    doc !is PagedDocument -> Unit
-                    textMode && text != null ->
-                        if (paged) PdfBookPages(text!!, doc, state, controller, colors, book, showControls, toggleControls)
-                        else TextPages(text!!, doc, state, controller, colors, toggleControls)
-                    else -> PdfPages(doc, state, controller, toggleControls)
+                CompositionLocalProvider(LocalLoadingMeter provides meter) {
+                    when {
+                        state.phase == Phase.Loading -> BookLoading(theme.colors())
+                        state.phase is Phase.Failed -> Text((state.phase as Phase.Failed).message)
+                        doc == null -> Unit
+                        doc is EpubBook ->
+                            if (paged) EpubBookPages(doc, state, controller, colors, book, showControls, toggleControls)
+                            else EpubPages(doc, state, controller, colors, toggleControls)
+                        doc !is PagedDocument -> Unit
+                        textMode && text != null ->
+                            if (paged) PdfBookPages(text!!, doc, state, controller, colors, book, showControls, toggleControls)
+                            else TextPages(text!!, doc, state, controller, colors, toggleControls)
+                        else -> PdfPages(doc, state, controller, toggleControls)
+                    }
                 }
             }
             AnimatedVisibility(
                 visible = showControls,
                 enter = slideInVertically { -it } + fadeIn(),
                 exit = slideOutVertically { -it } + fadeOut(),
-                modifier = Modifier.align(Alignment.TopCenter),
+                modifier = Modifier.align(Alignment.TopCenter).onSizeChanged { topBarPx = it.height },
             ) {
                 TopAppBar(
                     colors = TopAppBarDefaults.topAppBarColors(
-                        containerColor = colors.background,
+                        containerColor = chrome,
                         titleContentColor = colors.text,
                         navigationIconContentColor = colors.text,
                         actionIconContentColor = colors.text,
@@ -198,7 +240,7 @@ fun ReaderScreen(vm: ReaderViewModel, onBack: () -> Unit) {
                     visible = showControls,
                     enter = slideInVertically { it } + fadeIn(),
                     exit = slideOutVertically { it } + fadeOut(),
-                    modifier = Modifier.align(Alignment.BottomCenter),
+                    modifier = Modifier.align(Alignment.BottomCenter).onSizeChanged { bottomBarPx = it.height },
                 ) {
                     // In book pages the scrubber moves through those pages; otherwise (or while a
                     // PDF's pages are still being prepared) through the PDF's pages or the EPUB's chapters.
@@ -208,7 +250,7 @@ fun ReaderScreen(vm: ReaderViewModel, onBack: () -> Unit) {
                         pageCount = if (bookPages) book.count else doc.pageCount,
                         unit = if (bookPages) "Page " else if (doc is EpubBook) "Chapter " else "",
                         color = colors.text,
-                        background = colors.background,
+                        background = chrome,
                         onSeek = if (bookPages) { page -> book.seek(page) } else controller::goToPage,
                     )
                 }
@@ -217,17 +259,27 @@ fun ReaderScreen(vm: ReaderViewModel, onBack: () -> Unit) {
     }
 }
 
-/** Hides the status and navigation bars while reading; a swipe from the edge brings them back briefly. */
+/**
+ * Hides the navigation bar while reading (a swipe from the edge brings it back briefly) and keeps
+ * the status bar's icons legible on the page colour: dark on light and sepia, light on dark.
+ */
 @Composable
-private fun ImmersiveEffect(immersive: Boolean) {
+private fun ImmersiveEffect(immersive: Boolean, darkPage: Boolean) {
     val view = LocalView.current
-    DisposableEffect(view, immersive) {
+    DisposableEffect(view, immersive, darkPage) {
         val window = view.context.findActivity()?.window
         val bars = window?.let { WindowCompat.getInsetsController(it, view) }
         bars?.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-        if (immersive) bars?.hide(WindowInsetsCompat.Type.systemBars())
-        else bars?.show(WindowInsetsCompat.Type.systemBars())
-        onDispose { bars?.show(WindowInsetsCompat.Type.systemBars()) }
+        bars?.isAppearanceLightStatusBars = !darkPage
+        bars?.isAppearanceLightNavigationBars = !darkPage
+        if (immersive) bars?.hide(WindowInsetsCompat.Type.navigationBars())
+        else bars?.show(WindowInsetsCompat.Type.navigationBars())
+        onDispose {
+            bars?.show(WindowInsetsCompat.Type.navigationBars())
+            // Back to the library, which is always light.
+            bars?.isAppearanceLightStatusBars = true
+            bars?.isAppearanceLightNavigationBars = true
+        }
     }
 }
 

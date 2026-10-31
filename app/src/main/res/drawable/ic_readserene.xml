@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The Readserene mark: an open book on a brown tile, as on readserene's website (favicon.svg). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="64dp"
+    android:height="64dp"
+    android:viewportWidth="64"
+    android:viewportHeight="64">
+    <path
+        android:fillColor="#7A5A3A"
+        android:pathData="M14,0h36a14,14 0,0 1,14 14v36a14,14 0,0 1,-14 14h-36a14,14 0,0 1,-14 -14v-36a14,14 0,0 1,14 -14z" />
+    <path
+        android:fillColor="#F5ECD9"
+        android:pathData="M32,19c-5.3,-4 -12.8,-5.3 -21.3,-4.7v36c8.5,-0.6 16,0.7 21.3,4.7 5.3,-4 12.8,-5.3 21.3,-4.7v-36C44.8,13.7 37.3,15 32,19Z" />
+    <path
+        android:strokeColor="#7A5A3A"
+        android:strokeWidth="2.5"
+        android:pathData="M32,19v36" />
+    <path
+        android:strokeColor="#7A5A3A"
+        android:strokeAlpha="0.55"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:pathData="M16,24h10M16,30h10M16,36h10M38,24h10M38,30h10M38,36h7" />
+</vector>

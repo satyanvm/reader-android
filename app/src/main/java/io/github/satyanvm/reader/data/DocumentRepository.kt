@@ -45,7 +45,23 @@ class DocumentRepository(
 
     suspend fun setReadingMode(id: String, mode: String) = dao.setReadingMode(id, mode)
 
-    suspend fun import(uri: Uri): DocumentEntity = withContext(Dispatchers.IO) {
+    suspend fun setCurrentlyReading(id: String, reading: Boolean) = dao.setCurrentlyReading(id, reading)
+
+    /** The file's name without its extension, offered as the book's title before importing. */
+    suspend fun suggestedTitle(uri: Uri): String? = withContext(Dispatchers.IO) {
+        runCatching { displayName(uri) }.getOrNull()?.substringBeforeLast('.')?.takeIf { it.isNotBlank() }
+    }
+
+    /** Whether [uri] looks like a PDF by its type or name; PDFs are named by the reader on import. */
+    fun looksLikePdf(uri: Uri): Boolean =
+        context.contentResolver.getType(uri) == "application/pdf" ||
+            runCatching { displayName(uri) }.getOrNull()?.endsWith(".pdf", ignoreCase = true) == true
+
+    /**
+     * Copies [uri] into the library. A [title] the reader typed names the book, here and on the
+     * account, even if the book was already in the library under another name.
+     */
+    suspend fun import(uri: Uri, title: String? = null): DocumentEntity = withContext(Dispatchers.IO) {
         val tmp = File.createTempFile("import", ".part", dir)
         try {
             val input = context.contentResolver.openInputStream(uri)
@@ -57,7 +73,19 @@ class DocumentRepository(
                 }
             }
             val id = sha256(tmp)
-            register(id, tmp, titleFallback = displayName(uri)?.substringBeforeLast('.'), openedAt = now())
+            val chosen = title?.trim()?.takeIf { it.isNotEmpty() }
+            val doc = register(
+                id, tmp,
+                titleFallback = chosen ?: displayName(uri)?.substringBeforeLast('.'),
+                openedAt = now(),
+                preferFallbackTitle = chosen != null,
+            )
+            if (chosen != null && doc.title != chosen) {
+                dao.rename(id, chosen)
+                doc.copy(title = chosen)
+            } else {
+                doc
+            }
         } finally {
             if (tmp.exists()) tmp.delete()
         }

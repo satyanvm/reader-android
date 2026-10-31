@@ -19,11 +19,6 @@ class ReadingPrefs(context: Context) {
     )
     val theme: StateFlow<TextTheme> = _theme.asStateFlow()
 
-    private val _flow = MutableStateFlow(
-        runCatching { TextFlow.valueOf(prefs.getString("flow", null) ?: "") }.getOrDefault(TextFlow.PAGED)
-    )
-    val flow: StateFlow<TextFlow> = _flow.asStateFlow()
-
     var textScale: Float
         get() = prefs.getFloat("text_scale", 1f)
         set(value) = prefs.edit().putFloat("text_scale", value).apply()
@@ -31,10 +26,5 @@ class ReadingPrefs(context: Context) {
     fun setTheme(theme: TextTheme) {
         _theme.value = theme
         prefs.edit().putString("theme", theme.name).apply()
-    }
-
-    fun setFlow(flow: TextFlow) {
-        _flow.value = flow
-        prefs.edit().putString("flow", flow.name).apply()
     }
 }

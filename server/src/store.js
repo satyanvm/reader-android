@@ -68,6 +68,26 @@ export class Store {
       ['CREATE TABLE IF NOT EXISTS book_chunks (key TEXT NOT NULL, idx INTEGER NOT NULL, data BLOB NOT NULL, PRIMARY KEY (key, idx))'],
       ['CREATE TABLE IF NOT EXISTS rate_events (key TEXT NOT NULL, at INTEGER NOT NULL)'],
       ['CREATE INDEX IF NOT EXISTS rate_events_key ON rate_events(key, at)'],
+      // One-time codes that hand a website sign-in to an app (auth.js, createAppCode).
+      [`CREATE TABLE IF NOT EXISTS app_codes (
+          code_hash TEXT PRIMARY KEY,
+          account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+          challenge TEXT NOT NULL,
+          expires_at INTEGER NOT NULL)`],
+      // Paid plans (billing.js): one row per Lemon Squeezy subscription, as its latest webhook said.
+      [`CREATE TABLE IF NOT EXISTS subscriptions (
+          provider TEXT NOT NULL,
+          subscription_id TEXT NOT NULL,
+          account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+          status TEXT NOT NULL,
+          variant_name TEXT,
+          renews_at INTEGER,
+          ends_at INTEGER,
+          manage_url TEXT,
+          provider_updated_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          PRIMARY KEY (provider, subscription_id))`],
+      ['CREATE INDEX IF NOT EXISTS subscriptions_account ON subscriptions(account_id)'],
       [`CREATE TABLE IF NOT EXISTS dev_mail (
           id INTEGER PRIMARY KEY, to_addr TEXT NOT NULL, subject TEXT NOT NULL, text TEXT NOT NULL, created_at INTEGER NOT NULL)`],
     ]);
@@ -175,6 +195,22 @@ export class Store {
       email, purpose, codeHash)).changes === 1;
   }
 
+  // App sign-in codes (stored hashed, single use)
+
+  async putAppCode(codeHash, accountId, challenge, expiresAt, now) {
+    await this.db.run('DELETE FROM app_codes WHERE expires_at < ?', now);
+    await this.db.run('INSERT INTO app_codes (code_hash, account_id, challenge, expires_at) VALUES (?, ?, ?, ?)',
+      codeHash, accountId, challenge, expiresAt);
+  }
+
+  /** Returns the code's row and deletes it; null if it's unknown or another request took it first. */
+  async takeAppCode(codeHash) {
+    const row = await this.db.first('SELECT * FROM app_codes WHERE code_hash = ?', codeHash);
+    if (!row) return null;
+    const taken = (await this.db.run('DELETE FROM app_codes WHERE code_hash = ?', codeHash)).changes === 1;
+    return taken ? row : null;
+  }
+
   // Apple / Google identities
 
   async accountForIdentity(provider, subject) {
@@ -248,6 +284,36 @@ export class Store {
       now, accountId, documentId)).changes === 1;
   }
 
+  // Subscriptions
+
+  async subscriptions(accountId) {
+    return (await this.db.all('SELECT * FROM subscriptions WHERE account_id = ?', accountId)).map(toSubscription);
+  }
+
+  /**
+   * Records what a webhook said about a subscription. Webhooks can arrive out of order, so an
+   * event older than the stored one (by Lemon Squeezy's updated_at) changes nothing. Returns false
+   * if the subscription can't be tied to an existing account.
+   */
+  async putSubscription(provider, s, now) {
+    let accountId = s.accountId;
+    if (accountId === null) {
+      const row = await this.db.first('SELECT account_id FROM subscriptions WHERE provider = ? AND subscription_id = ?', provider, s.subscriptionId);
+      if (!row) return false;
+      accountId = Number(row.account_id);
+    }
+    if (!(await this.accountById(accountId))) return false;
+    await this.db.run(`INSERT INTO subscriptions (provider, subscription_id, account_id, status, variant_name, renews_at, ends_at,
+          manage_url, provider_updated_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT (provider, subscription_id) DO UPDATE SET account_id = excluded.account_id, status = excluded.status,
+        variant_name = excluded.variant_name, renews_at = excluded.renews_at, ends_at = excluded.ends_at,
+        manage_url = excluded.manage_url, provider_updated_at = excluded.provider_updated_at, updated_at = excluded.updated_at
+      WHERE excluded.provider_updated_at >= subscriptions.provider_updated_at`,
+      provider, s.subscriptionId, accountId, s.status, s.variantName, s.renewsAt, s.endsAt, s.manageUrl, s.providerUpdatedAt, now);
+    return true;
+  }
+
   // Positions
 
   async get(accountId, documentId) {
@@ -302,6 +368,19 @@ function toBook(row) {
     hasFile: Boolean(row.has_file),
     addedAt: Number(row.added_at),
     removedAt: row.removed_at === null || row.removed_at === undefined ? null : Number(row.removed_at),
+  };
+}
+
+function toSubscription(row) {
+  const num = (v) => (v === null || v === undefined ? null : Number(v));
+  return {
+    subscriptionId: row.subscription_id,
+    status: row.status,
+    variantName: row.variant_name ?? null,
+    renewsAt: num(row.renews_at),
+    endsAt: num(row.ends_at),
+    manageUrl: row.manage_url ?? null,
+    providerUpdatedAt: Number(row.provider_updated_at),
   };
 }
 

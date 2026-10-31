@@ -8,6 +8,7 @@
 //   RESEND_API_KEY, MAIL_FROM   send account emails with Resend (otherwise they're only logged)
 //   READER_DEV_MAIL_DIR  development: also write each email to this folder
 //   GOOGLE_CLIENT_IDS, APPLE_AUDIENCES   comma-separated, turn on Google / Apple sign-in
+//   LEMONSQUEEZY_WEBHOOK_SECRET, LEMONSQUEEZY_CHECKOUT_MONTHLY, LEMONSQUEEZY_CHECKOUT_YEARLY   payments (README)
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { nodeSqlite } from '../src/db.js';

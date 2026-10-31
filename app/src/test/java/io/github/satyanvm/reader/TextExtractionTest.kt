@@ -194,4 +194,26 @@ class TextExtractionTest {
             assertEquals(66, it.getInt(0))
         }
     }
+
+    @Test
+    fun `upgrading to version 4 opens PDFs as flowing text and adds the reading lists`() {
+        migrations.createDatabase("migrate4.db", 3).apply {
+            execSQL(
+                "INSERT INTO documents (id, title, localPath, sizeBytes, pageCount, lastOpenedAt, readingMode, format) " +
+                    "VALUES ('abc', 'Meditations', '/x.pdf', 10, 224, 1, 'PAGES', 'PDF')"
+            )
+            close()
+        }
+        val db = migrations.runMigrationsAndValidate("migrate4.db", 4, true, AppDatabase.MIGRATION_3_4)
+        db.query("SELECT readingMode, currentlyReading FROM documents WHERE id = 'abc'").use {
+            it.moveToFirst()
+            assertEquals("TEXT", it.getString(0))
+            assertEquals(0, it.getInt(1))
+        }
+        db.execSQL("INSERT INTO wishlist (title, author, addedAt) VALUES ('Dune', 'Frank Herbert', 1)")
+        db.query("SELECT COUNT(*) FROM wishlist").use {
+            it.moveToFirst()
+            assertEquals(1, it.getInt(0))
+        }
+    }
 }
