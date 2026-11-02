@@ -190,6 +190,15 @@ class AccountTest {
 
         server.addAccount("h@example.com", "password1")
         account.signIn("h@example.com", "password1")
+        // Signed in without Pro: sync is part of Pro, so still nothing is sent.
+        account.refreshPro()
+        assertFalse(account.syncAllowed)
+        assertTrue(engine.pushPending())
+        assertEquals(0, server.positionPuts)
+
+        server.pro = true
+        account.refreshPro()
+        assertTrue(account.syncAllowed)
         assertTrue(engine.pushPending())
         assertEquals(1, server.positionPuts)
         assertTrue(device.repo.pending().isEmpty())

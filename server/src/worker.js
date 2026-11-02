@@ -1,5 +1,8 @@
 import { Auth } from './auth.js';
-import { PLANS, billingStatus, checkoutUrl, subscriptionFromEvent, validSignature } from './billing.js';
+import {
+  PLANS, billingStatus, checkoutUrl, proStatus, razorpayCheckoutUrl, razorpayEnabled, subscriptionFromEvent,
+  subscriptionFromRazorpay, validSignature,
+} from './billing.js';
 import { DigestMismatch, dbBlobs, r2Blobs } from './blobs.js';
 import { d1 } from './db.js';
 import { HttpError } from './errors.js';
@@ -45,7 +48,7 @@ const BOOK_FORMATS = new Set(['PDF', 'EPUB']);
  *   POST /v1/auth/app/code         { challenge }  (signed in)   -> { code }  (a website sign-in,
  *                                                                  handed to an app; see auth.js)
  *   POST /v1/auth/app/token        { code, verifier }           -> session
- *   GET  /v1/me                    -> { email }
+ *   GET  /v1/me                    -> { email, pro }
  *   POST /v1/auth/signout          -> ends this session
  *   GET  /healthz
  *
@@ -62,8 +65,12 @@ const BOOK_FORMATS = new Set(['PDF', 'EPUB']);
  *   GET  /v1/billing                -> { pro, plan, status, renewsAt, endsAt, manageUrl, plans }
  *   POST /v1/billing/checkout       { plan: "monthly" | "yearly" } -> { url }  (open in a browser)
  *   POST /v1/billing/lemonsqueezy   Lemon Squeezy's webhook, signed with X-Signature
+ *   POST /v1/billing/razorpay       Razorpay's webhook, signed with X-Razorpay-Signature
+ *
+ * With SYNC_REQUIRES_PRO = "1", /v1/library and /v1/reading-positions answer 402 `pro_required`
+ * to accounts without Pro: sync is the paid feature; reading on one device stays free.
  */
-export function createHandler({ store, blobs, env = {}, keys = new KeySet(), log = console.log, devSink }) {
+export function createHandler({ store, blobs, env = {}, keys = new KeySet(), log = console.log, devSink, fetchImpl = fetch }) {
   const list = (v) => String(v ?? '').split(',').map((s) => s.trim()).filter(Boolean);
   const testMode = env.TEST_MODE === '1';
 
@@ -114,12 +121,24 @@ export function createHandler({ store, blobs, env = {}, keys = new KeySet(), log
         return await lemonSqueezyWebhook({ store, env, request, now: now(), log });
       }
 
+      if (pathname === '/v1/billing/razorpay') {
+        if (method !== 'POST') throw new HttpError(405, 'method not allowed');
+        return await razorpayWebhook({ store, env, request, now: now(), log });
+      }
+
       if (testMode && pathname.startsWith('/__test/')) return testRoute(store, pathname, method, request, url);
 
       const token = bearer(request);
+      const hasPro = async (accountId) => proStatus(await store.subscriptions(accountId), now()).pro;
+      const requirePro = async (accountId) => {
+        if (env.SYNC_REQUIRES_PRO === '1' && !(await hasPro(accountId))) {
+          throw new HttpError(402, 'sync is part of Readserene Pro', 'pro_required');
+        }
+      };
       if (LIBRARY_ROUTE.test(pathname)) {
         const accountId = await store.accountForToken(token);
         if (accountId === null) throw new HttpError(401, 'missing or invalid token', 'unauthorized');
+        await requirePro(accountId);
         return await libraryRoute({ store, blobs, accountId, request, now: now() });
       }
 
@@ -133,7 +152,18 @@ export function createHandler({ store, blobs, env = {}, keys = new KeySet(), log
         if (method !== 'POST') throw new HttpError(405, 'method not allowed');
         const plan = (await readJson(request))?.plan;
         if (!PLANS.includes(plan)) throw new HttpError(422, `plan must be one of ${PLANS.join(', ')}`);
-        const url = checkoutUrl(env, plan, await store.accountById(accountId));
+        const account = await store.accountById(accountId);
+        let url;
+        if (razorpayEnabled(env)) {
+          try {
+            url = await razorpayCheckoutUrl(env, plan, account, fetchImpl);
+          } catch (e) {
+            log(`billing: ${e.message}`);
+            throw new HttpError(502, 'The payment service isn’t answering. Try again in a moment.', 'billing_upstream');
+          }
+        } else {
+          url = checkoutUrl(env, plan, account);
+        }
         if (!url) throw new HttpError(503, 'this plan cannot be bought yet', 'billing_unavailable');
         return json(200, { url });
       }
@@ -151,13 +181,14 @@ export function createHandler({ store, blobs, env = {}, keys = new KeySet(), log
         if (accountId === null) throw new HttpError(401, 'missing or invalid token', 'unauthorized');
         if (pathname === '/v1/me') {
           if (method !== 'GET') throw new HttpError(405, 'method not allowed');
-          return json(200, { email: (await store.accountById(accountId))?.email ?? null });
+          return json(200, { email: (await store.accountById(accountId))?.email ?? null, pro: await hasPro(accountId) });
         }
         if (pathname === '/v1/auth/signout') {
           if (method !== 'POST') throw new HttpError(405, 'method not allowed');
           await store.revokeToken(token);
           return json(200, { status: 'signed_out' });
         }
+        await requirePro(accountId);
         let documentId;
         try {
           documentId = decodeURIComponent(POSITION_ROUTE.exec(pathname)[1]);
@@ -204,6 +235,28 @@ async function lemonSqueezyWebhook({ store, env, request, now, log }) {
   if (!sub) return json(200, { ok: true, ignored: event });
   const stored = await store.putSubscription('lemonsqueezy', sub, now);
   // Acknowledged either way: retrying wouldn't tie it to an account.
+  if (!stored) log(`billing: ${event} for subscription ${sub.subscriptionId} has no known account`);
+  return json(200, { ok: true, stored });
+}
+
+async function razorpayWebhook({ store, env, request, now, log }) {
+  const secret = env.RAZORPAY_WEBHOOK_SECRET;
+  if (!secret) throw new HttpError(503, 'billing is not set up on this server', 'billing_unavailable');
+  if (Number(request.headers.get('content-length') ?? 0) > MAX_WEBHOOK_BODY) throw new HttpError(413, 'body too large');
+  const raw = await request.text();
+  if (raw.length > MAX_WEBHOOK_BODY) throw new HttpError(413, 'body too large');
+  // Same scheme as Lemon Squeezy's: hex HMAC-SHA256 of the raw body.
+  if (!(await validSignature(secret, raw, request.headers.get('x-razorpay-signature')))) throw new HttpError(401, 'bad signature');
+  let payload;
+  try {
+    payload = JSON.parse(raw);
+  } catch {
+    throw new HttpError(400, 'body is not JSON');
+  }
+  const sub = subscriptionFromRazorpay(payload, env);
+  const event = String(payload?.event ?? '');
+  if (!sub) return json(200, { ok: true, ignored: event });
+  const stored = await store.putSubscription('razorpay', sub, now);
   if (!stored) log(`billing: ${event} for subscription ${sub.subscriptionId} has no known account`);
   return json(200, { ok: true, stored });
 }

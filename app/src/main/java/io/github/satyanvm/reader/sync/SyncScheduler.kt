@@ -72,6 +72,8 @@ class SyncScheduler(private val context: Context) {
 class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result {
         val graph = (applicationContext as ReaderApp).graph
+        // Sync is part of Pro: check it each time, so a purchase or a lapse is picked up.
+        graph.account.refreshPro()
         val pushed = graph.syncEngine.pushPending()
         val library = graph.librarySync.sync()
         return if (pushed && library) Result.success() else Result.retry()

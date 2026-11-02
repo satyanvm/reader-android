@@ -19,8 +19,9 @@ export const PLANS = ['monthly', 'yearly'];
 
 const CHECKOUT_ENV = { monthly: 'LEMONSQUEEZY_CHECKOUT_MONTHLY', yearly: 'LEMONSQUEEZY_CHECKOUT_YEARLY' };
 
-/** Which plans can be bought on this server. */
+/** Which plans can be bought on this server (through Razorpay when it's set up, else Lemon Squeezy). */
 export function availablePlans(env) {
+  if (razorpayEnabled(env)) return PLANS.filter((plan) => razorpayPlanId(env, plan));
   return PLANS.filter((plan) => validLink(env[CHECKOUT_ENV[plan]]));
 }
 
@@ -79,14 +80,15 @@ const time = (v) => {
 };
 
 /**
- * Whether a subscription gives Pro now. Past-due keeps it while Lemon Squeezy retries the card;
- * a cancelled one keeps it until the end of the period that was paid for.
+ * Whether a subscription gives Pro now. Past-due (Lemon Squeezy) and pending (Razorpay) keep it
+ * while the card is retried; a cancelled one keeps it until the end of the period that was paid for.
  */
 export function grantsPro(sub, now) {
   switch (sub.status) {
     case 'active':
     case 'on_trial':
     case 'past_due':
+    case 'pending':
       return true;
     case 'cancelled':
       return sub.endsAt !== null && sub.endsAt > now;
@@ -97,6 +99,11 @@ export function grantsPro(sub, now) {
 
 /** What GET /v1/billing returns for an account's subscriptions. */
 export function billingStatus(subs, now, env) {
+  return { ...proStatus(subs, now), plans: availablePlans(env) };
+}
+
+/** Whether any of an account's subscriptions gives Pro now, and the details of the one that matters. */
+export function proStatus(subs, now) {
   // The one that matters: one granting Pro if any, otherwise the latest.
   const sorted = [...subs].sort((a, b) => (grantsPro(b, now) - grantsPro(a, now)) || (b.providerUpdatedAt - a.providerUpdatedAt));
   const sub = sorted[0] ?? null;
@@ -107,6 +114,83 @@ export function billingStatus(subs, now, env) {
     renewsAt: sub?.renewsAt ?? null,
     endsAt: sub?.endsAt ?? null,
     manageUrl: sub?.manageUrl ?? null,
-    plans: availablePlans(env),
+  };
+}
+
+/**
+ * Razorpay (India: UPI, cards, netbanking, and international cards once enabled on the account).
+ * Preferred over Lemon Squeezy when it is configured. Unlike a share link, a Razorpay subscription
+ * is created through the API, per purchase:
+ *
+ *  1. POST /v1/billing/checkout creates a subscription for the plan with the account id in its
+ *     notes, and returns its `short_url`, Razorpay's hosted page where the buyer pays.
+ *  2. Razorpay calls the webhook (POST /v1/billing/razorpay) on every subscription event, signed
+ *     with the webhook secret in X-Razorpay-Signature.
+ *
+ * Configuration:
+ *   RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET   API keys (Dashboard → Account & Settings → API Keys); secret is a wrangler secret
+ *   RAZORPAY_PLAN_MONTHLY, RAZORPAY_PLAN_YEARLY   plan ids (plan_...) from Dashboard → Subscriptions → Plans
+ *   RAZORPAY_WEBHOOK_SECRET               the secret set on the webhook (wrangler secret)
+ */
+const RAZORPAY_PLAN_ENV = { monthly: 'RAZORPAY_PLAN_MONTHLY', yearly: 'RAZORPAY_PLAN_YEARLY' };
+/** Billing cycles a subscription runs for before it has to be renewed by hand (Razorpay needs a count). */
+const RAZORPAY_TOTAL_COUNT = { monthly: 120, yearly: 10 };
+
+const razorpayPlanId = (env, plan) => {
+  const id = String(env[RAZORPAY_PLAN_ENV[plan]] ?? '').trim();
+  return /^plan_[A-Za-z0-9]+$/.test(id) ? id : null;
+};
+
+/** Whether checkout goes through Razorpay on this server. */
+export function razorpayEnabled(env) {
+  return Boolean(env.RAZORPAY_KEY_ID && env.RAZORPAY_KEY_SECRET && PLANS.some((p) => razorpayPlanId(env, p)));
+}
+
+/** Creates a Razorpay subscription for `plan` and returns its hosted payment link; null if that plan isn't set up. */
+export async function razorpayCheckoutUrl(env, plan, account, fetchImpl = fetch) {
+  const planId = razorpayPlanId(env, plan);
+  if (!planId) return null;
+  const api = env.RAZORPAY_API || 'https://api.razorpay.com';
+  const res = await fetchImpl(`${api}/v1/subscriptions`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Basic ${btoa(`${env.RAZORPAY_KEY_ID}:${env.RAZORPAY_KEY_SECRET}`)}`,
+    },
+    body: JSON.stringify({
+      plan_id: planId,
+      total_count: RAZORPAY_TOTAL_COUNT[plan],
+      customer_notify: 1,
+      notes: { account_id: String(account.id), plan },
+      ...(account.email ? { notify_info: { notify_email: account.email } } : {}),
+    }),
+  });
+  const body = await res.json().catch(() => null);
+  if (!res.ok || typeof body?.short_url !== 'string') {
+    throw new Error(`razorpay: creating a subscription failed (${res.status}): ${body?.error?.description ?? 'no detail'}`);
+  }
+  return body.short_url;
+}
+
+/**
+ * The subscription a Razorpay webhook describes, in the same shape as subscriptionFromEvent, or
+ * null for events that aren't about one (payments, refunds). Razorpay times are in seconds.
+ */
+export function subscriptionFromRazorpay(payload, env) {
+  const s = payload?.payload?.subscription?.entity;
+  if (!String(payload?.event ?? '').startsWith('subscription.') || !s?.id) return null;
+  const accountId = Number(s.notes?.account_id);
+  const ms = (v) => (Number.isFinite(Number(v)) && Number(v) > 0 ? Number(v) * 1000 : null);
+  const plan = PLANS.find((p) => razorpayPlanId(env, p) === s.plan_id) ?? s.notes?.plan;
+  return {
+    subscriptionId: String(s.id),
+    accountId: Number.isSafeInteger(accountId) && accountId > 0 ? accountId : null,
+    status: String(s.status ?? ''),
+    variantName: plan ? plan[0].toUpperCase() + plan.slice(1) : null,
+    renewsAt: s.status === 'cancelled' ? null : ms(s.charge_at) ?? ms(s.current_end),
+    // A cancelled subscription keeps Pro to the end of the period paid for, unless it ended at once.
+    endsAt: s.status === 'cancelled' || s.status === 'completed' ? ms(s.ended_at) ?? ms(s.current_end) : null,
+    manageUrl: null,
+    providerUpdatedAt: ms(payload.created_at) ?? 0,
   };
 }

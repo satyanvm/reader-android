@@ -65,13 +65,41 @@ Passwords are hashed (see above); codes expire after 10 minutes, are single-use,
 
 `bin/admin.js` still makes token-only accounts for scripts (`add-account`, `issue-token`, `revoke-tokens`, `list`).
 
+## Payments (Razorpay)
+
+When Razorpay is configured, checkout uses it (UPI, cards, netbanking; international cards once Razorpay enables them on your account). Each purchase creates a Razorpay subscription through the API with the account id in its notes, and the app opens its hosted payment page. Razorpay's signed webhooks tell the server which accounts have Pro.
+
+1. In the [Razorpay dashboard](https://dashboard.razorpay.com) (Test mode first), go to Subscriptions → Plans and create two plans: Monthly (every 1 month) and Yearly (every 12 months). Razorpay plans have their own currency: keep the prices in line with `PricingScreen.kt` and the website's `src/site.config.ts` (reader-web).
+2. Put the plan ids and your key id in `wrangler.toml` under `[vars]`:
+   ```toml
+   RAZORPAY_KEY_ID = "rzp_test_..."
+   RAZORPAY_PLAN_MONTHLY = "plan_..."
+   RAZORPAY_PLAN_YEARLY = "plan_..."
+   ```
+3. Store the key secret: `npx wrangler secret put RAZORPAY_KEY_SECRET`.
+4. Account & Settings → Webhooks → add `https://<your worker>/v1/billing/razorpay`, choose a secret, and tick the `subscription.*` events (authenticated, activated, charged, pending, halted, cancelled, completed, paused, resumed, updated). Then `npx wrangler secret put RAZORPAY_WEBHOOK_SECRET` and `npm run deploy`.
+5. Buy Pro in an app with a Razorpay [test card or UPI id](https://razorpay.com/docs/payments/payments/test-card-upi-details/) (`success@razorpay`); the app shows Pro within a few seconds.
+6. To go live, repeat 1–4 with live-mode keys, plans and webhook.
+
+What counts as Pro: `active` and `pending` (while the card is retried) subscriptions, and `cancelled` ones until the end of the period paid for. Cancelling is done in the Razorpay dashboard (Subscriptions → the subscription → Cancel, "at end of cycle").
+
+### Pro-only sync
+
+With `SYNC_REQUIRES_PRO = "1"` (the default in `wrangler.toml`), `/v1/library` and `/v1/reading-positions` answer `402 { code: "pro_required" }` to accounts without Pro. Signing in, reading and billing stay open to everyone. `GET /v1/me` includes `pro`.
+
+### Pro without paying (you, testers)
+
+`node bin/admin.js grant-pro <email>` gives an account Pro that never expires (a `manual` subscription no payment webhook touches); `revoke-pro <email>` takes it back. For the live D1 database, `node bin/admin.js grant-pro-sql <email>` prints the `npx wrangler d1 execute reader --remote` command to run. The account has to exist first (sign up once).
+
 ## Payments (Lemon Squeezy)
+
+Used when Razorpay isn't configured.
 
 Pro is sold through [Lemon Squeezy](https://www.lemonsqueezy.com), the merchant of record: it takes the card, PayPal or wallet payment in the buyer's currency, collects and pays sales tax and VAT worldwide, and pays you out. No monthly fee; it takes a cut of each sale. The server never sees payment details. It only learns from signed webhooks which accounts have Pro, so the Android and Mac apps share one purchase.
 
 Setup (test mode first, then the same steps in live mode):
 
-1. Create a store at [app.lemonsqueezy.com](https://app.lemonsqueezy.com) and add a **subscription** product, "Reader Pro", with two variants: Monthly ($2.99/month) and Yearly ($24.99/year). Keep the prices equal to the ones in the app's `PricingScreen.kt`.
+1. Create a store at [app.lemonsqueezy.com](https://app.lemonsqueezy.com) and add a **subscription** product, "Reader Pro", with two variants: Monthly ($9/month) and Yearly ($72/year). Keep the prices equal to the ones in the app's `PricingScreen.kt` and the website's `src/site.config.ts` (reader-web).
 2. For each variant, copy its **share link** (`https://<store>.lemonsqueezy.com/buy/<uuid>`) and put it in `wrangler.toml` under `[vars]`:
    ```toml
    LEMONSQUEEZY_CHECKOUT_MONTHLY = "https://<store>.lemonsqueezy.com/buy/<uuid>"

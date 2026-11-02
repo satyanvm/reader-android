@@ -74,7 +74,7 @@ private val PLANS = listOf(
     Plan(
         key = "monthly",
         name = "Pro",
-        price = "$2.99",
+        price = "$9",
         period = "per month",
         blurb = "Your library on every device.",
         features = listOf(
@@ -88,9 +88,9 @@ private val PLANS = listOf(
     Plan(
         key = "yearly",
         name = "Pro yearly",
-        price = "$24.99",
+        price = "$72",
         period = "per year",
-        blurb = "Pro, with about two months free.",
+        blurb = "Pro, with four months free.",
         features = listOf("Everything in Pro", "Billed once a year"),
     ),
 )
@@ -103,7 +103,7 @@ private sealed interface PlanState {
 }
 
 /**
- * The plans, and buying one: checkout happens on Lemon Squeezy's page in the browser, which
+ * The plans, and buying one: checkout happens on the payment provider's page (Razorpay) in the browser, which
  * tells the sync server when it's paid. Coming back here refreshes the plan.
  */
 @OptIn(ExperimentalMaterial3Api::class)

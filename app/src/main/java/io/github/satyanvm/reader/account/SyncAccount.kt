@@ -14,6 +14,10 @@ import kotlinx.coroutines.flow.asStateFlow
  * [fallbackToken] (`sync.token` in local.properties) stands in while no account is signed in, for
  * testing against a server with a token from `server/bin/admin.js`.
  *
+ * Sync is part of Pro: signed in without it, [syncAllowed] is false and nothing syncs. [pro] is the
+ * server's last answer, kept in [prefs] so an offline start still syncs once the network is back;
+ * [refreshPro] asks again (each background sync does, so a purchase or a lapse is picked up).
+ *
  * The session is kept in [prefs], private to this app.
  */
 class SyncAccount(
@@ -22,6 +26,8 @@ class SyncAccount(
     private val fallbackToken: String = "",
     /** Called after every sign-in, so reading done before it goes up straight away. */
     private val onSignedIn: () -> Unit = {},
+    /** Called when the account gains Pro, so sync can start straight away. */
+    private val onProGained: () -> Unit = {},
 ) : AccountSession {
 
     sealed interface Stage {
@@ -46,7 +52,13 @@ class SyncAccount(
     private val _notice = MutableStateFlow<String?>(null)
     val notice: StateFlow<String?> = _notice.asStateFlow()
 
+    private val _pro = MutableStateFlow(session != null && prefs.getBoolean(KEY_PRO, false))
+    /** Whether the signed-in account has Pro (false while signed out). */
+    val pro: StateFlow<Boolean> = _pro.asStateFlow()
+
     override val isSignedIn: Boolean get() = token() != null
+    // The local.properties test token has no account behind it to buy Pro; let it sync.
+    override val syncAllowed: Boolean get() = if (session != null) _pro.value else isSignedIn
     override fun token(): String? = session?.token ?: fallbackToken.ifBlank { null }
 
     suspend fun loadProviders() {
@@ -113,7 +125,24 @@ class SyncAccount(
     /** The signed-in account's plan; null while signed out. */
     suspend fun billing(): AccountApi.Billing? {
         val token = session?.token ?: return null
-        return signedInCall { api.billing(token) }
+        return signedInCall { api.billing(token) }.also { if (session?.token == token) setPro(it.pro) }
+    }
+
+    /** Asks the server whether the account has Pro; on failure keeps the last answer. */
+    suspend fun refreshPro() {
+        if (session == null) return
+        try {
+            billing()
+        } catch (_: AccountException) {
+            // Offline or the server hiccupped: the cached answer stands until the next try.
+        }
+    }
+
+    private fun setPro(pro: Boolean) {
+        val gained = pro && !_pro.value
+        _pro.value = pro
+        prefs.edit().putBoolean(KEY_PRO, pro).apply()
+        if (gained) onProGained()
     }
 
     suspend fun checkoutUrl(plan: String): String {
@@ -157,7 +186,8 @@ class SyncAccount(
 
     private fun clear() {
         session = null
-        prefs.edit().remove(KEY_TOKEN).remove(KEY_EMAIL).commit()
+        _pro.value = false
+        prefs.edit().remove(KEY_TOKEN).remove(KEY_EMAIL).remove(KEY_PRO).commit()
         _stage.value = Stage.SignedOut
     }
 
@@ -173,6 +203,7 @@ class SyncAccount(
     private companion object {
         const val KEY_TOKEN = "token"
         const val KEY_EMAIL = "email"
+        const val KEY_PRO = "pro"
 
         fun clean(email: String) = email.trim().lowercase()
     }
