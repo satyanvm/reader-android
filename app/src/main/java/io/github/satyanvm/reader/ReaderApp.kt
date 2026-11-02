@@ -56,6 +56,8 @@ class AppGraph(context: Context) {
         fallbackToken = BuildConfig.SYNC_TOKEN,
         // Reading done on this device before signing in goes up now.
         onSignedIn = { syncScheduler.requestSync(delaySeconds = 0) },
+        // Just bought Pro (or it was confirmed after an offline start): sync now.
+        onProGained = { syncScheduler.requestSync(delaySeconds = 0) },
     )
     val googleSignIn = GoogleSignIn(BuildConfig.GOOGLE_WEB_CLIENT_ID)
 

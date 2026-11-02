@@ -26,7 +26,7 @@ class AccountException(val code: String, message: String) : Exception(message)
  *   GET  /v1/auth/providers        -> { apple, google }
  *   POST /v1/auth/signout          ends this session
  *   GET  /v1/billing               -> { pro, plan, status, renewsAt, endsAt, manageUrl, plans }
- *   POST /v1/billing/checkout      { plan }                   -> { url }  (Lemon Squeezy checkout)
+ *   POST /v1/billing/checkout      { plan }                   -> { url }  (Razorpay's payment page)
  */
 class AccountApi(
     private val baseUrl: String,

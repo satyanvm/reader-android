@@ -62,8 +62,10 @@ fun AccountScreen(
     google: GoogleSignIn,
     onBack: () -> Unit,
     onSignedIn: () -> Unit,
+    onPricing: () -> Unit = {},
 ) {
     val stage by account.stage.collectAsStateWithLifecycle()
+    val pro by account.pro.collectAsStateWithLifecycle()
     val providers by account.providers.collectAsStateWithLifecycle()
     val notice by account.notice.collectAsStateWithLifecycle()
     val context = LocalContext.current
@@ -73,6 +75,7 @@ fun AccountScreen(
     var info by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(Unit) { account.loadProviders() }
+    LaunchedEffect(stage) { if (stage is SyncAccount.Stage.SignedIn) account.refreshPro() }
 
     // Signing in here (not arriving already signed in) goes straight back to the library.
     val startedSignedIn = remember { stage is SyncAccount.Stage.SignedIn }
@@ -126,7 +129,9 @@ fun AccountScreen(
             when (val s = stage) {
                 is SyncAccount.Stage.SignedIn -> SignedInContent(
                     email = s.email,
+                    pro = pro,
                     busy = busy,
+                    onPricing = onPricing,
                     onSignOut = { submit { account.signOut() } },
                 )
                 is SyncAccount.Stage.AwaitingCode -> CodeContent(
@@ -173,13 +178,22 @@ fun AccountScreen(
 }
 
 @Composable
-private fun SignedInContent(email: String, busy: Boolean, onSignOut: () -> Unit) {
+private fun SignedInContent(email: String, pro: Boolean, busy: Boolean, onPricing: () -> Unit, onSignOut: () -> Unit) {
     Text("Signed in as", style = MaterialTheme.typography.labelLarge)
     Text(email.ifEmpty { "your account" }, style = MaterialTheme.typography.titleMedium)
-    Text(
-        "Your books and your place in each one sync automatically with your other devices signed in to this account. Books you add here are uploaded, and books added elsewhere download to this device.",
-        style = MaterialTheme.typography.bodyMedium,
-    )
+    Text(if (pro) "Plan: Readserene Pro" else "Plan: Free", style = MaterialTheme.typography.labelLarge)
+    if (pro) {
+        Text(
+            "Your books and your place in each one sync automatically with your other devices signed in to this account. Books you add here are uploaded, and books added elsewhere download to this device.",
+            style = MaterialTheme.typography.bodyMedium,
+        )
+    } else {
+        Text(
+            "Sync is part of Readserene Pro: your library and your place in every book, on all your devices. Everything else stays free, and your books stay on this phone.",
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        Button(onClick = onPricing, modifier = Modifier.fillMaxWidth()) { Text("Get Pro to sync") }
+    }
     OutlinedButton(onClick = onSignOut, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text("Sign out") }
 }
 

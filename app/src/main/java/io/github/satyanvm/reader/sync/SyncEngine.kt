@@ -19,7 +19,7 @@ class SyncEngine(
 ) {
     private val pushLock = Mutex()
 
-    val isEnabled: Boolean get() = api != null && session.isSignedIn
+    val isEnabled: Boolean get() = api != null && session.syncAllowed
 
     /**
      * Pushes every unacknowledged local position. Returns false if anything failed and should be

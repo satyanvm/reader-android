@@ -295,6 +295,20 @@ export class Store {
    * event older than the stored one (by Lemon Squeezy's updated_at) changes nothing. Returns false
    * if the subscription can't be tied to an existing account.
    */
+  /**
+   * Pro without payment (the owner, testers): a 'manual' subscription that never ends and that no
+   * payment webhook touches. `bin/admin.js grant-pro-sql` prints the same grant for D1.
+   */
+  async grantPro(accountId, now) {
+    await this.db.run(`INSERT INTO subscriptions (provider, subscription_id, account_id, status, variant_name, renews_at, ends_at,
+          manage_url, provider_updated_at, updated_at)
+        VALUES ('manual', 'admin-' || ?, ?, 'active', NULL, NULL, NULL, NULL, ?, ?)
+      ON CONFLICT (provider, subscription_id) DO UPDATE SET status = 'active', updated_at = excluded.updated_at`,
+      accountId, accountId, now, now);
+  }
+  async revokePro(accountId) {
+    return (await this.db.run(`DELETE FROM subscriptions WHERE provider = 'manual' AND account_id = ?`, accountId)).changes ?? 0;
+  }
   async putSubscription(provider, s, now) {
     let accountId = s.accountId;
     if (accountId === null) {

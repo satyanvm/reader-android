@@ -70,7 +70,7 @@ describe('email and password', () => {
     assert.equal(phone.status, 200);
     assert.notEqual(phone.body.token, mac.token, 'each device gets its own session');
     assert.equal((await get('/v1/reading-positions/book', phone.body.token)).body.pageIndex, 186);
-    assert.deepEqual((await get('/v1/me', phone.body.token)).body, { email: 'reader@example.com' });
+    assert.deepEqual((await get('/v1/me', phone.body.token)).body, { email: 'reader@example.com', pro: false });
   });
 
   test('no session until the email is confirmed', async () => {

@@ -9,6 +9,8 @@
 //   READER_DEV_MAIL_DIR  development: also write each email to this folder
 //   GOOGLE_CLIENT_IDS, APPLE_AUDIENCES   comma-separated, turn on Google / Apple sign-in
 //   LEMONSQUEEZY_WEBHOOK_SECRET, LEMONSQUEEZY_CHECKOUT_MONTHLY, LEMONSQUEEZY_CHECKOUT_YEARLY   payments (README)
+//   RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET, RAZORPAY_PLAN_MONTHLY, RAZORPAY_PLAN_YEARLY, RAZORPAY_WEBHOOK_SECRET   Razorpay payments
+//   SYNC_REQUIRES_PRO    1: library and position sync are Pro-only
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { nodeSqlite } from '../src/db.js';

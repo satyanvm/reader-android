@@ -29,7 +29,7 @@ class LibrarySync(
 ) {
     private val lock = Mutex()
 
-    val isEnabled: Boolean get() = api != null && session.isSignedIn
+    val isEnabled: Boolean get() = api != null && session.syncAllowed
 
     /** Returns false if anything failed and should be retried later. */
     suspend fun sync(): Boolean {
